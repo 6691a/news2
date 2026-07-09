@@ -1,0 +1,50 @@
+# Python bytecode and build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Virtual environments and local Python versions
+.venv/
+venv/
+env/
+ENV/
+
+
+# Environment and secret files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Test, lint, and type-check caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyrefly/
+.coverage
+coverage/
+htmlcov/
+
+# Logs and runtime files
+*.log
+logs/
+tmp/
+temp/
+
+# Database and local storage files
+*.sqlite
+*.sqlite3
+*.db
+
+# IDE/editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
