@@ -1,18 +1,24 @@
 import asyncio
+import inspect
+import json
 from contextlib import suppress
 from typing import cast
 
 import pytest
+import websockets
 from websockets.protocol import State
 
 from app.core.config import Settings
-from app.kis.quote import KISWebSocketQuote
+from app.kis.exceptions import KISWebSocketSubscriptionLimitError
 from app.kis.schemas import (
+    KISTrType,
+    KISWebSocketSubscription,
     KISWebSocketTokenResponse,
-    KISTrId,
-    StockCode,
 )
-from app.kis.schemas.websocket import KISSubscription
+from app.kis.websocket.base import (
+    KIS_MAX_SUBSCRIPTIONS,
+    KISBaseWebSocketQuote,
+)
 
 
 class FakeWebSocket:
@@ -78,6 +84,16 @@ class FailingConnection:
         raise RuntimeError("fatal handshake")
 
 
+class StubKISWebSocketQuote(KISBaseWebSocketQuote):
+    """Base의 보호 구독 API를 테스트에 노출한다."""
+
+    async def subscribe_wire(self, subscription: KISWebSocketSubscription) -> None:
+        await self._subscribe(subscription)
+
+    async def unsubscribe_wire(self, subscription: KISWebSocketSubscription) -> None:
+        await self._unsubscribe(subscription)
+
+
 def _make_settings() -> Settings:
     """테스트용 KIS 설정 스텁을 만든다."""
 
@@ -97,11 +113,37 @@ def _make_settings() -> Settings:
     )
 
 
-def make_quote() -> KISWebSocketQuote:
-    """테스트용 설정으로 시세 웹소켓 객체를 만든다."""
+def make_quote(**kwargs: object) -> StubKISWebSocketQuote:
+    """테스트용 설정으로 공용 웹소켓 객체를 만든다."""
 
     token = KISWebSocketTokenResponse(approval_key="approval-key")
-    return KISWebSocketQuote(settings=_make_settings(), token=token)
+    return StubKISWebSocketQuote(
+        settings=_make_settings(),
+        token=token,
+        **kwargs,
+    )
+
+
+def make_subscription(index: int = 0) -> KISWebSocketSubscription:
+    """중복되지 않는 테스트용 wire 구독을 만든다."""
+
+    return KISWebSocketSubscription(
+        tr_id=f"TR{index:02d}",
+        tr_key=f"KEY{index:02d}",
+    )
+
+
+def test_payload_uses_generic_websocket_subscription() -> None:
+    quote = make_quote()
+    subscription = KISWebSocketSubscription(
+        tr_id="H0STCNT0",
+        tr_key="005930",
+    )
+
+    payload = quote._create_payload(subscription, KISTrType.SUBSCRIBE)
+
+    assert payload.body.input.tr_id == "H0STCNT0"
+    assert payload.body.input.tr_key == "005930"
 
 
 @pytest.mark.asyncio
@@ -120,7 +162,7 @@ async def test_run_disables_websocket_protocol_ping(
         return connection
 
     monkeypatch.setattr(
-        "app.kis.quote.websockets.connect",
+        "app.kis.websocket.base.websockets.connect",
         connect_with_captured_options,
     )
 
@@ -136,12 +178,12 @@ async def test_run_disables_websocket_protocol_ping(
 
 
 @pytest.mark.asyncio
-async def test_pingpong_is_answered_without_entering_the_stream_queue() -> None:
+async def test_pingpong_is_answered_without_entering_stream_queue() -> None:
     message = '{"header":{"tr_id":"PINGPONG","datetime":"20260710171541"}}'
     websocket = FakeWebSocket(messages=[message])
     quote = make_quote()
 
-    receive_task = asyncio.create_task(quote._receive(websocket))
+    receive_task = asyncio.create_task(quote._receive(cast(websockets.ClientConnection, websocket)))
     await asyncio.sleep(0)
     await websocket.close()
     await receive_task
@@ -151,38 +193,71 @@ async def test_pingpong_is_answered_without_entering_the_stream_queue() -> None:
 
 
 @pytest.mark.asyncio
-async def test_existing_subscription_does_not_hit_the_subscription_limit() -> None:
+async def test_existing_subscription_does_not_hit_limit() -> None:
     quote = make_quote()
-    subscriptions = [
-        KISSubscription(code=code, tr_id=tr_id)
-        for code in StockCode
-        for tr_id in KISTrId
-    ][:40]
-    quote._requested_subscriptions.update(subscriptions)
-    existing = subscriptions[0]
+    for index in range(KIS_MAX_SUBSCRIPTIONS):
+        await quote.subscribe_wire(make_subscription(index))
 
-    await quote.subscribe(code=existing.code, tr_id=existing.tr_id)
+    await quote.subscribe_wire(make_subscription(0))
 
-    assert len(quote.subscriptions) == 40
+    assert len(quote.subscriptions) == KIS_MAX_SUBSCRIPTIONS
 
 
 @pytest.mark.asyncio
-async def test_full_queue_drops_oldest_message() -> None:
+async def test_new_subscription_over_limit_is_rejected() -> None:
     quote = make_quote()
-    quote._queue = asyncio.Queue(maxsize=2)
+    for index in range(KIS_MAX_SUBSCRIPTIONS):
+        await quote.subscribe_wire(make_subscription(index))
 
-    for text in ["a", "b", "c"]:
-        quote._enqueue(text)
+    with pytest.raises(KISWebSocketSubscriptionLimitError):
+        await quote.subscribe_wire(make_subscription(KIS_MAX_SUBSCRIPTIONS))
+
+
+def test_subscription_limit_is_not_configurable() -> None:
+    parameters = inspect.signature(KISBaseWebSocketQuote.__init__).parameters
+
+    assert "max_subscriptions" not in parameters
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_removes_requested_subscription() -> None:
+    quote = make_quote()
+    subscription = make_subscription()
+    await quote.subscribe_wire(subscription)
+
+    await quote.unsubscribe_wire(subscription)
+
+    assert quote.subscriptions == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_resubscribe_sends_all_requested_subscriptions() -> None:
+    quote = make_quote()
+    subscription = make_subscription()
+    await quote.subscribe_wire(subscription)
+    websocket = FakeWebSocket()
+
+    await quote._resubscribe_all(cast(websockets.ClientConnection, websocket))
+
+    assert len(websocket.sent) == 1
+    payload = json.loads(websocket.sent[0])
+    assert payload["body"]["input"] == {"tr_id": "TR00", "tr_key": "KEY00"}
+
+
+def test_full_queue_drops_oldest_message() -> None:
+    quote = make_quote(queue_maxsize=2)
+
+    for message in ["a", "b", "c"]:
+        quote._enqueue(message)
 
     drained = [quote._queue.get_nowait() for _ in range(quote._queue.qsize())]
     assert drained == ["b", "c"]
-    assert quote._dropped_messages == 1
+    assert quote.dropped_messages == 1
 
 
 def test_zero_queue_maxsize_is_rejected() -> None:
-    token = KISWebSocketTokenResponse(approval_key="approval-key")
-    with pytest.raises(ValueError):
-        KISWebSocketQuote(settings=_make_settings(), token=token, queue_maxsize=0)
+    with pytest.raises(ValueError, match="queue_maxsize must be positive"):
+        make_quote(queue_maxsize=0)
 
 
 @pytest.mark.asyncio
@@ -191,11 +266,10 @@ async def test_run_propagates_fatal_error(
 ) -> None:
     quote = make_quote()
     monkeypatch.setattr(
-        "app.kis.quote.websockets.connect",
+        "app.kis.websocket.base.websockets.connect",
         lambda *_args, **_kwargs: FailingConnection(),
     )
 
-    # 치명 오류는 삼키지 않고 전파되어 프로세스가 종료(→ Docker 재시작)된다.
     with pytest.raises(RuntimeError, match="fatal handshake"):
         await quote.run()
 
@@ -206,4 +280,5 @@ async def test_stream_yields_enqueued_message() -> None:
     quote._enqueue("tick")
 
     message = await asyncio.wait_for(quote.stream().__anext__(), timeout=0.1)
+
     assert message == "tick"

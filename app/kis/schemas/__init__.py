@@ -9,10 +9,9 @@ from app.kis.schemas.auth import (
     KISWebSocketTokenResponse,
 )
 from app.kis.schemas.common import KISBaseModel
-from app.kis.schemas.stock import StockCode
 from app.kis.schemas.websocket import (
-    KISTrId,
     KISTrType,
+    KISWebSocketSubscription,
     KISWebSocketSubscriptionBody,
     KISWebSocketSubscriptionHeader,
     KISWebSocketSubscriptionInput,
@@ -27,13 +26,12 @@ __all__ = [
     "KISBaseAuthRequest",
     "KISBaseAuthTokenHeader",
     "KISBaseModel",
-    "KISTrId",
     "KISTrType",
+    "KISWebSocketSubscription",
     "KISWebSocketSubscriptionBody",
     "KISWebSocketSubscriptionHeader",
     "KISWebSocketSubscriptionInput",
     "KISWebSocketSubscriptionMessage",
     "KISWebSocketTokenRequest",
     "KISWebSocketTokenResponse",
-    "StockCode",
 ]

@@ -1,9 +1,8 @@
 from enum import StrEnum
 
-from pydantic import Field, ConfigDict
+from pydantic import ConfigDict, Field
 
 from app.kis.schemas.common import KISBaseModel
-from app.kis.schemas.stock import StockCode
 
 
 class KISTrType(StrEnum):
@@ -18,19 +17,9 @@ class KISWebSocketSubscriptionHeader(KISBaseModel):
     content_type: str = Field(serialization_alias="content-type", default="utf-8")
 
 
-class KISTrId(StrEnum):
-    STOCK_TRADE_KRX = "H0STCNT0"  # KRX(한국거래소) 실시간 체결가
-    STOCK_TRADE_NXT = "H0NXCNT0"  # NXT(넥스트레이드) 실시간 체결가
-    STOCK_TRADE_UNIFIED = "H0UNCNT0"  # KRX와 NXT 통합 실시간 체결가
-
-    STOCK_ORDERBOOK_KRX = "H0STASP0"  # KRX(한국거래소) 실시간 매수·매도 호가
-    STOCK_ORDERBOOK_NXT = "H0NXASP0"  # NXT(넥스트레이드) 실시간 매수·매도 호가
-    STOCK_ORDERBOOK_UNIFIED = "H0UNASP0"  # KRX와 NXT 통합 실시간 매수·매도 호가
-
-
 class KISWebSocketSubscriptionInput(KISBaseModel):
-    tr_key: StockCode
-    tr_id: KISTrId
+    tr_key: str
+    tr_id: str
 
 
 class KISWebSocketSubscriptionBody(KISBaseModel):
@@ -42,8 +31,8 @@ class KISWebSocketSubscriptionMessage(KISBaseModel):
     body: KISWebSocketSubscriptionBody
 
 
-class KISSubscription(KISBaseModel):
+class KISWebSocketSubscription(KISBaseModel):
     model_config = ConfigDict(frozen=True, serialize_by_alias=True)
 
-    code: StockCode
-    tr_id: KISTrId
+    tr_id: str
+    tr_key: str

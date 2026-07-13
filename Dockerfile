@@ -17,5 +17,5 @@ RUN uv sync --frozen --no-dev --no-install-project
 # 애플리케이션 소스만 복사한다(.env·노트북은 이미지에 넣지 않는다).
 COPY app ./app
 
-# python -m app.kis → app/kis/__main__.py 실행.
-CMD ["python", "-m", "app.kis"]
+# python -m app.kis.korea → app/kis/korea/__main__.py 실행.
+CMD ["python", "-m", "app.kis.korea"]

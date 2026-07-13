@@ -41,6 +41,9 @@ temp/
 *.sqlite3
 *.db
 
+# Jupyter notebooks
+*.ipynb
+
 # IDE/editor files
 .idea/
 .vscode/

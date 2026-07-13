@@ -2,13 +2,11 @@ import json
 
 from app.kis.schemas import (
     KISAuthRequest,
-    KISTrId,
     KISTrType,
     KISWebSocketSubscriptionBody,
     KISWebSocketSubscriptionHeader,
     KISWebSocketSubscriptionInput,
     KISWebSocketSubscriptionMessage,
-    StockCode,
 )
 from app.kis.schemas.auth import KISAuthRequest as AuthRequestFromModule
 from app.kis.schemas.websocket import (
@@ -39,8 +37,8 @@ def test_websocket_subscription_serializes_kis_aliases() -> None:
         ),
         body=KISWebSocketSubscriptionBody(
             input=KISWebSocketSubscriptionInput(
-                tr_key=StockCode.SAMSUNG_ELECTRONICS,
-                tr_id=KISTrId.STOCK_TRADE_KRX,
+                tr_key="005930",
+                tr_id="H0STCNT0",
             )
         ),
     )

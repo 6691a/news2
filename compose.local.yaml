@@ -22,10 +22,18 @@ services:
     volumes:
       - redisdata:/data
 
-  kis-quote:
+  kis-korea-quote:
     build: .
     env_file: .env
     restart: always
+    # 즉시 크래시-루프 시 재시작 폭주를 완화한다.
+    stop_grace_period: 10s
+
+  kis-overseas-quote:
+    build: .
+    env_file: .env
+    restart: always
+    command: ["python", "-m", "app.kis.overseas"]
     # 즉시 크래시-루프 시 재시작 폭주를 완화한다.
     stop_grace_period: 10s
 
