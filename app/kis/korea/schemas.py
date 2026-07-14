@@ -5,25 +5,8 @@ from enum import StrEnum
 from pydantic import ConfigDict
 
 from app.kis.schemas.common import KISBaseModel
+from app.kis.schemas.parsing import none_if_empty, parse_kis_date, parse_kis_time
 from app.kis.schemas.websocket import KISWebSocketSubscription
-
-
-def _parse_date(value: str) -> date:
-    """KIS YYYYMMDD 문자열을 날짜로 변환한다."""
-
-    return date(int(value[:4]), int(value[4:6]), int(value[6:8]))
-
-
-def _parse_time(value: str) -> time:
-    """KIS HHMMSS 문자열을 시각으로 변환한다."""
-
-    return time(int(value[:2]), int(value[2:4]), int(value[4:6]))
-
-
-def _none_if_empty(value: str) -> str | None:
-    """빈 KIS 문자열을 None으로 정규화한다."""
-
-    return value or None
 
 
 class KISKoreaStockCode(StrEnum):
@@ -122,7 +105,7 @@ class KISKoreaTrade(KISBaseModel):
 
         return cls(
             stock_code=fields[0],
-            trade_time=_parse_time(fields[1]),
+            trade_time=parse_kis_time(fields[1]),
             current_price=Decimal(fields[2]),
             previous_day_sign=fields[3],
             previous_day_difference=Decimal(fields[4]),
@@ -145,16 +128,16 @@ class KISKoreaTrade(KISBaseModel):
             trade_classification_code=fields[21],
             buy_rate=Decimal(fields[22]),
             previous_volume_cumulative_rate=Decimal(fields[23]),
-            open_time=_parse_time(fields[24]),
+            open_time=parse_kis_time(fields[24]),
             open_price_sign=fields[25],
             open_price_difference=Decimal(fields[26]),
-            high_time=_parse_time(fields[27]),
+            high_time=parse_kis_time(fields[27]),
             high_price_sign=fields[28],
             high_price_difference=Decimal(fields[29]),
-            low_time=_parse_time(fields[30]),
+            low_time=parse_kis_time(fields[30]),
             low_price_sign=fields[31],
             low_price_difference=Decimal(fields[32]),
-            business_date=_parse_date(fields[33]),
+            business_date=parse_kis_date(fields[33]),
             new_market_operation_code=fields[34],
             trading_halt_yn=fields[35],
             best_ask_quantity=int(fields[36]),
@@ -165,7 +148,7 @@ class KISKoreaTrade(KISBaseModel):
             previous_same_time_cumulative_volume=int(fields[41]),
             previous_same_time_cumulative_volume_rate=Decimal(fields[42]),
             hour_classification_code=fields[43],
-            market_operation_code=_none_if_empty(fields[44]),
+            market_operation_code=none_if_empty(fields[44]),
             vi_standard_price=Decimal(fields[45]),
         )
 
@@ -235,7 +218,7 @@ class KISKoreaOrderbook(KISBaseModel):
 
         return cls(
             stock_code=fields[0],
-            business_time=_parse_time(fields[1]),
+            business_time=parse_kis_time(fields[1]),
             hour_classification_code=fields[2],
             levels=levels,
             total_ask_quantity=int(fields[43]),

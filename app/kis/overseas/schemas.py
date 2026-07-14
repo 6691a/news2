@@ -1,8 +1,11 @@
+from datetime import date, time
+from decimal import Decimal
 from enum import StrEnum
 
 from pydantic import ConfigDict
 
 from app.kis.schemas.common import KISBaseModel
+from app.kis.schemas.parsing import parse_kis_date, parse_kis_time
 from app.kis.schemas.websocket import KISWebSocketSubscription
 
 
@@ -94,7 +97,33 @@ class KISOverseasTrade(KISBaseModel):
         25 mtyp   시장구분
     """
 
-    # TODO: 위 스펙대로 필드 선언 (예: last: Decimal, evol: int, ...)
+    # 현재 공식 예제의 25필드 앞에 실제 캡처의 RSYM 필드를 포함한 26필드 구조다.
+    realtime_symbol: str  # RSYM: 실시간 종목코드(시세 구분·거래소·티커 조합)
+    symbol: str  # SYMB: 종목코드(미국 티커)
+    decimal_places: int  # ZDIV: 가격 소수점 자리수
+    local_business_date: date  # TYMD: 현지 영업일자
+    local_date: date  # XYMD: 현지 일자
+    local_time: time  # XHMS: 현지 시각
+    korea_date: date  # KYMD: 한국 일자
+    korea_time: time  # KHMS: 한국 시각
+    open_price: Decimal  # OPEN: 당일 시가
+    high_price: Decimal  # HIGH: 당일 최고가
+    low_price: Decimal  # LOW: 당일 최저가
+    last_price: Decimal  # LAST: 현재가(체결가)
+    change_sign: str  # SIGN: 전일 대비 부호
+    change_amount: Decimal  # DIFF: 전일 대비 가격
+    change_rate: Decimal  # RATE: 전일 대비율
+    bid_price: Decimal  # PBID: 최우선 매수호가
+    ask_price: Decimal  # PASK: 최우선 매도호가
+    bid_quantity: int  # VBID: 최우선 매수호가 잔량
+    ask_quantity: int  # VASK: 최우선 매도호가 잔량
+    trade_volume: int  # EVOL: 직전 체결 수량
+    total_volume: int  # TVOL: 당일 누적 거래량
+    total_amount: Decimal  # TAMT: 당일 누적 거래대금
+    sell_trade_volume: int  # BIVL: 누적 매도 체결량
+    buy_trade_volume: int  # ASVL: 누적 매수 체결량
+    trade_strength: Decimal  # STRN: 체결강도
+    market_type: str  # MTYP: 시장 구분 코드
 
     @classmethod
     def from_body(cls, fields: list[str]) -> "KISOverseasTrade":
@@ -107,8 +136,37 @@ class KISOverseasTrade(KISBaseModel):
             파싱된 체결 모델.
         """
 
-        # TODO: fields 인덱스를 위 스펙에 맞춰 매핑
-        raise NotImplementedError
+        if len(fields) != 26:
+            raise ValueError(f"Overseas trade body must contain 26 fields: {len(fields)}")
+
+        return cls(
+            realtime_symbol=fields[0],
+            symbol=fields[1],
+            decimal_places=int(fields[2]),
+            local_business_date=parse_kis_date(fields[3]),
+            local_date=parse_kis_date(fields[4]),
+            local_time=parse_kis_time(fields[5]),
+            korea_date=parse_kis_date(fields[6]),
+            korea_time=parse_kis_time(fields[7]),
+            open_price=Decimal(fields[8]),
+            high_price=Decimal(fields[9]),
+            low_price=Decimal(fields[10]),
+            last_price=Decimal(fields[11]),
+            change_sign=fields[12],
+            change_amount=Decimal(fields[13]),
+            change_rate=Decimal(fields[14]),
+            bid_price=Decimal(fields[15]),
+            ask_price=Decimal(fields[16]),
+            bid_quantity=int(fields[17]),
+            ask_quantity=int(fields[18]),
+            trade_volume=int(fields[19]),
+            total_volume=int(fields[20]),
+            total_amount=Decimal(fields[21]),
+            sell_trade_volume=int(fields[22]),
+            buy_trade_volume=int(fields[23]),
+            trade_strength=Decimal(fields[24]),
+            market_type=fields[25],
+        )
 
 
 class KISOverseasOrderbookLevel(KISBaseModel):
@@ -118,7 +176,12 @@ class KISOverseasOrderbookLevel(KISBaseModel):
               매수잔량대비 / 매도잔량대비.
     """
 
-    # TODO: 6개 필드 선언
+    bid_price: Decimal  # PBID1~10: 단계별 매수호가
+    ask_price: Decimal  # PASK1~10: 단계별 매도호가
+    bid_quantity: int  # VBID1~10: 단계별 매수호가 잔량
+    ask_quantity: int  # VASK1~10: 단계별 매도호가 잔량
+    bid_quantity_change: int  # DBID1~10: 단계별 매수호가 잔량 증감
+    ask_quantity_change: int  # DASK1~10: 단계별 매도호가 잔량 증감
 
 
 class KISOverseasOrderbook(KISBaseModel):
@@ -141,7 +204,19 @@ class KISOverseasOrderbook(KISBaseModel):
     이후 index 11부터 6필드씩 10단계 → levels: list[KISOverseasOrderbookLevel]
     """
 
-    # TODO: 헤더/총잔량 필드 + levels: list[KISOverseasOrderbookLevel]
+    # 현재 공식 미국 무료 예제의 1단계 호가를 실제 캡처 구조에 맞춰 10단계로 확장해 보존한다.
+    realtime_symbol: str  # RSYM: 실시간 종목코드(시세 구분·거래소·티커 조합)
+    symbol: str  # SYMB: 종목코드(미국 티커)
+    decimal_places: int  # ZDIV: 가격 소수점 자리수
+    local_date: date  # XYMD: 현지 일자
+    local_time: time  # XHMS: 현지 시각
+    korea_date: date  # KYMD: 한국 일자
+    korea_time: time  # KHMS: 한국 시각
+    total_bid_quantity: int  # BVOL: 총 매수호가 잔량
+    total_ask_quantity: int  # AVOL: 총 매도호가 잔량
+    total_bid_quantity_change: int  # BDVL: 총 매수호가 잔량 증감
+    total_ask_quantity_change: int  # ADVL: 총 매도호가 잔량 증감
+    levels: list[KISOverseasOrderbookLevel]  # 1~10단계 가격별 매수·매도 호가와 잔량
 
     @classmethod
     def from_body(cls, fields: list[str]) -> "KISOverseasOrderbook":
@@ -154,21 +229,92 @@ class KISOverseasOrderbook(KISBaseModel):
             10단계 호가를 담은 호가 스냅샷 모델.
         """
 
-        # TODO: 헤더 11필드 파싱 후, 11번 인덱스부터 6개씩 잘라 levels 구성
-        raise NotImplementedError
+        if len(fields) != 71:
+            raise ValueError(f"Overseas orderbook body must contain 71 fields: {len(fields)}")
+
+        levels = []
+        for index in range(10):
+            offset = 11 + index * 6
+            levels.append(
+                KISOverseasOrderbookLevel(
+                    bid_price=Decimal(fields[offset]),
+                    ask_price=Decimal(fields[offset + 1]),
+                    bid_quantity=int(fields[offset + 2]),
+                    ask_quantity=int(fields[offset + 3]),
+                    bid_quantity_change=int(fields[offset + 4]),
+                    ask_quantity_change=int(fields[offset + 5]),
+                )
+            )
+
+        return cls(
+            realtime_symbol=fields[0],
+            symbol=fields[1],
+            decimal_places=int(fields[2]),
+            local_date=parse_kis_date(fields[3]),
+            local_time=parse_kis_time(fields[4]),
+            korea_date=parse_kis_date(fields[5]),
+            korea_time=parse_kis_time(fields[6]),
+            total_bid_quantity=int(fields[7]),
+            total_ask_quantity=int(fields[8]),
+            total_bid_quantity_change=int(fields[9]),
+            total_ask_quantity_change=int(fields[10]),
+            levels=levels,
+        )
 
 
-def parse_frame(raw: str) -> KISOverseasTrade | KISOverseasOrderbook | None:
+def parse_frame(raw: str) -> list[KISOverseasTrade | KISOverseasOrderbook] | None:
     """수신 프레임 문자열을 tr_id에 따라 알맞은 모델로 파싱한다.
 
     Args:
         raw: 웹소켓에서 받은 원본 프레임 문자열.
 
     Returns:
-        체결/호가 모델. 구독 성공 JSON 등 데이터 프레임이 아니면 None.
+        프레임에 포함된 체결 또는 호가 DTO 목록. JSON 제어 메시지는 None.
+
+    Raises:
+        ValueError: 프레임 헤더, TR ID, 레코드 수 또는 본문이 잘못된 경우.
     """
 
-    # TODO: "|" 로 헤더 분리 → tr_id 로 분기 → body 를 "^" 로 split →
-    #       KISOverseasTrade / KISOverseasOrderbook 의 from_body 호출.
-    #       데이터 프레임이 아니면(JSON 등) None 반환.
-    raise NotImplementedError
+    if raw.lstrip().startswith("{"):
+        return None
+
+    parts = raw.split("|", 3)
+    if len(parts) != 4:
+        raise ValueError("KIS data frame must contain four pipe-delimited parts")
+
+    data_type, tr_id, record_count_value, body = parts
+    if data_type != "0":
+        raise ValueError(f"Unsupported KIS data type: {data_type!r}")
+
+    try:
+        record_count = int(record_count_value)
+    except ValueError as error:
+        raise ValueError(f"KIS record count must be an integer: {record_count_value!r}") from error
+
+    if record_count <= 0:
+        raise ValueError("KIS record count must be positive")
+
+    fields = body.split("^")
+    if tr_id == KISOverseasTrId.TRADE:
+        field_count = 26
+        if len(fields) != record_count * field_count:
+            raise ValueError(
+                f"Overseas trade frame must contain {record_count * field_count} body fields: {len(fields)}"
+            )
+        return [
+            KISOverseasTrade.from_body(fields[offset : offset + field_count])
+            for offset in range(0, len(fields), field_count)
+        ]
+
+    if tr_id == KISOverseasTrId.ORDERBOOK:
+        field_count = 71
+        if len(fields) != record_count * field_count:
+            raise ValueError(
+                f"Overseas orderbook frame must contain {record_count * field_count} body fields: {len(fields)}"
+            )
+        return [
+            KISOverseasOrderbook.from_body(fields[offset : offset + field_count])
+            for offset in range(0, len(fields), field_count)
+        ]
+
+    raise ValueError(f"Unsupported KIS overseas TR ID: {tr_id!r}")
