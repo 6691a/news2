@@ -1,8 +1,13 @@
 import json
 
+from app.kis.exceptions import (
+    KISWebSocketSubscriptionRejectedError,
+    KISWebSocketSubscriptionTimeoutError,
+)
 from app.kis.schemas import (
     KISAuthRequest,
     KISTrType,
+    KISWebSocketSubscriptionResponse,
     KISWebSocketSubscriptionBody,
     KISWebSocketSubscriptionHeader,
     KISWebSocketSubscriptionInput,
@@ -52,3 +57,42 @@ def test_websocket_subscription_serializes_kis_aliases() -> None:
         },
         "body": {"input": {"tr_key": "005930", "tr_id": "H0STCNT0"}},
     }
+
+
+def test_websocket_subscription_response_parses_success() -> None:
+    response = KISWebSocketSubscriptionResponse.model_validate(
+        {
+            "header": {
+                "tr_id": "H0STCNT0",
+                "tr_key": "000660",
+                "encrypt": "N",
+            },
+            "body": {
+                "rt_cd": "0",
+                "msg_cd": "OPSP0000",
+                "msg1": "SUBSCRIBE SUCCESS",
+                "output": {"iv": "unused", "key": "unused"},
+            },
+        }
+    )
+
+    assert response.header.tr_id == "H0STCNT0"
+    assert response.header.tr_key == "000660"
+    assert response.header.encrypt == "N"
+    assert response.is_success
+
+
+def test_websocket_subscription_errors_preserve_response_context() -> None:
+    rejected = KISWebSocketSubscriptionRejectedError(
+        tr_id="H0STCNT0",
+        tr_key="000660",
+        msg_cd="OPSP9999",
+        msg1="INVALID SUBSCRIPTION",
+    )
+    timeout = KISWebSocketSubscriptionTimeoutError(frozenset({("H0STCNT0", "000660")}))
+
+    assert rejected.tr_id == "H0STCNT0"
+    assert rejected.tr_key == "000660"
+    assert rejected.msg_cd == "OPSP9999"
+    assert rejected.msg1 == "INVALID SUBSCRIPTION"
+    assert timeout.pending_subscriptions == frozenset({("H0STCNT0", "000660")})

@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from typing import cast
 
 import pytest
@@ -8,9 +10,11 @@ from app.kis.overseas.schemas import (
     KISOverseasMarket,
     KISOverseasStockCode,
     KISOverseasSubscription,
+    KISOverseasTrade,
     KISOverseasTrId,
 )
 from app.kis.schemas import KISWebSocketSubscription, KISWebSocketTokenResponse
+from tests.kis.overseas.fixtures import GOOGL_TRADE_FRAMES, SUBSCRIBE_SUCCESS_TRADE
 
 
 def _make_settings() -> Settings:
@@ -82,3 +86,40 @@ async def test_trade_and_orderbook_for_same_us_stock_are_distinct() -> None:
             KISWebSocketSubscription(tr_id="HDFSASP0", tr_key="DNASAAPL"),
         }
     )
+
+
+@pytest.mark.asyncio
+async def test_stream_yields_parsed_overseas_trade() -> None:
+    quote = make_quote()
+    quote._enqueue(GOOGL_TRADE_FRAMES[0])
+
+    event = await asyncio.wait_for(anext(quote.stream()), timeout=0.1)
+
+    assert isinstance(event, KISOverseasTrade)
+    assert event.symbol == "GOOGL"
+
+
+@pytest.mark.asyncio
+async def test_stream_skips_overseas_json_control_message() -> None:
+    quote = make_quote()
+    quote._enqueue(SUBSCRIBE_SUCCESS_TRADE)
+    quote._enqueue(GOOGL_TRADE_FRAMES[0])
+
+    event = await asyncio.wait_for(anext(quote.stream()), timeout=0.1)
+
+    assert isinstance(event, KISOverseasTrade)
+
+
+@pytest.mark.asyncio
+async def test_stream_warns_and_continues_after_invalid_overseas_frame(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    quote = make_quote()
+    quote._enqueue("0|HDFSCNT0|001|short-body")
+    quote._enqueue(GOOGL_TRADE_FRAMES[0])
+
+    with caplog.at_level(logging.WARNING, logger="app.kis.overseas.quote"):
+        event = await asyncio.wait_for(anext(quote.stream()), timeout=0.1)
+
+    assert isinstance(event, KISOverseasTrade)
+    assert "short-body" in caplog.text

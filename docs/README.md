@@ -1,6 +1,7 @@
 # 주식 분석 LLM 시스템 설계 문서
 
-> **버전**: v0.9 · **작성일**: 2026-07-09
+> **버전**: v0.9 · **작성일**: 2026-07-09 · **갱신**: 2026-07-14 (시세 수집을 KIS 웹소켓 실시간으로 확정, tick 저장 스키마 추가)
+> **주의**: 이 문서는 첫 설계 초안 기반이다. 코드와 다르면 코드가 소스 오브 트루스 — 구현하며 계속 갱신한다.
 > **목적**: 확정된 추적 종목 9개(한국 2 + 미국 7, §1.4)에 대한 뉴스·시세 기반 LLM 분석/시그널 생성 시스템의 전체 설계
 > **성격**: 개인 분석 도구 및 AI/LLM 엔지니어링 포트폴리오 프로젝트 (자동매매 아님)
 
@@ -153,7 +154,8 @@ flowchart TD
 
 | 데이터 | 한국 | 미국/글로벌 | 비용 |
 |---|---|---|---|
-| 시세 (OHLCV) | 한국투자증권 KIS Developers OpenAPI (실시간 웹소켓 지원) | yfinance → 필요 시 Polygon.io / Finnhub | 무료 → 선택적 유료 |
+| 시세 — 실시간 (체결/호가 tick) | KIS Developers OpenAPI 웹소켓 | KIS 해외주식 웹소켓 (미국 주간거래) | 무료 |
+| 시세 — 일봉/과거 (OHLCV) | KIS OpenAPI | yfinance | 무료 |
 | 지수·선물·환율 | KIS API (KOSPI, KOSDAQ) | yfinance (S&P500, NASDAQ, VIX, 선물, USD/KRW, **USD/JPY, JPY/KRW**) | 무료 |
 | 채권 금리 | **한국은행 ECOS OpenAPI (국고채 3Y/10Y)** | **yfinance `^TNX` + FRED API (미국채 10Y/2Y)** | 무료 |
 | **수급 동향** | **KIS API 투자자별 매매동향 (외국인/기관/개인 순매수 — 종목별·시장별), 보완: KRX 정보데이터시스템** | (해당 없음 — 한국 시장 특화) | 무료 |
@@ -170,7 +172,7 @@ flowchart TD
 
 | 데이터 | 주기 | 비고 |
 |---|---|---|
-| 시세 | 장중 1~5분 폴링 (또는 웹소켓 실시간) | 장 마감 후 일봉 확정 배치 |
+| 시세 | 장중 웹소켓 실시간 (KIS 체결/호가 tick) | 장 마감 후 일봉 확정 배치 |
 | 뉴스 | 5~15분 | 실시간 대응의 실질 병목 지점 |
 | 공시 | 30분~1시간 | |
 | 지수/선물/환율 | 15분 | USD/JPY, JPY/KRW 포함 |
@@ -182,6 +184,9 @@ flowchart TD
 - **Celery Beat** (또는 APScheduler)로 주기 작업 관리
 - Kafka 등 스트리밍 인프라는 현재 규모(소수 종목)에서 불필요 — 의도적으로 배제
 - 수집 실패 시 재시도 + 로깅 (수집 지연 자체를 메트릭으로 기록)
+- KIS WebSocket 네트워크 단절은 백오프 후 재연결하지만, 필수 구독 거절 또는
+  5초 내 구독 확인 실패는 해당 시장 수집 프로세스를 종료해 감시 프로세스가
+  재시작하게 한다. `ALREADY IN SUBSCRIBE`는 멱등적 성공으로 처리한다.
 
 ---
 
@@ -191,7 +196,7 @@ flowchart TD
 
 | 테이블 그룹 | 내용 | 비고 |
 |---|---|---|
-| 시계열 | 종목별 OHLCV, 지수, 환율, 선물 | 규모 증가 시 TimescaleDB 확장 검토 |
+| 시계열 | 종목별 실시간 tick(체결/호가), OHLCV, 지수, 환율, 선물 | 규모 증가 시 TimescaleDB 확장 검토 |
 | 원문 | 뉴스/공시 원문 + 메타데이터 | |
 | 벡터 | 청크 + 임베딩 (pgvector) | |
 | 관계 | 엔티티·관계 테이블 (§6 참조) | |
@@ -217,6 +222,34 @@ CREATE TABLE ohlcv (
   volume BIGINT,
   PRIMARY KEY (instrument_id, timeframe, ts)
 );
+
+-- 실시간 tick (KIS 웹소켓 체결/호가 원시 데이터)
+-- 설계 노트:
+--  · 호가 10단계는 JSONB 단일 컬럼 — 소비 패턴이 항상 스냅샷 전체 복원이라 정규화 이득 없음
+--  · v1은 stock_code 직저장, instruments 정착 후 FK 전환
+CREATE TABLE korea_trades (
+  id             BIGSERIAL PRIMARY KEY,   -- 자연키 없음 (같은 초에 다건 체결)
+  stock_code     TEXT NOT NULL,           -- '005930'
+  ts             TIMESTAMPTZ NOT NULL,    -- business_date + trade_time (KST)
+  price          NUMERIC NOT NULL,        -- 체결가
+  volume         BIGINT NOT NULL,         -- 직전 체결 수량
+  cumulative_volume BIGINT NOT NULL,      -- 당일 누적 거래량
+  trade_classification_code TEXT NOT NULL,-- 매수/매도 구분
+  trade_strength NUMERIC,                 -- 체결강도
+  received_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX ON korea_trades (stock_code, ts);
+
+CREATE TABLE korea_orderbooks (
+  id             BIGSERIAL PRIMARY KEY,
+  stock_code     TEXT NOT NULL,
+  ts             TIMESTAMPTZ NOT NULL,    -- 호가 DTO엔 시각만 있어 received_at의 KST 날짜와 결합
+  levels         JSONB NOT NULL,          -- [{ask_price, bid_price, ask_quantity, bid_quantity} x10]
+  total_ask_quantity BIGINT NOT NULL,
+  total_bid_quantity BIGINT NOT NULL,
+  received_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX ON korea_orderbooks (stock_code, ts);
 
 -- 수급 동향 (한국 시장: 현물 종목별 + 선물 시장 단위)
 CREATE TABLE investor_flows (
@@ -499,7 +532,9 @@ CREATE TABLE signal_outcomes (
 
 - [x] 관심 종목 확정 — 총 9개 (§1.4): 삼성전자, SK하이닉스, AAPL, GOOGL, MSFT, META, NVDA, QQQ, SPY
 - [ ] `instruments` 테이블 등록 + 엔티티 별칭(aliases) 입력
-- [ ] 데이터 수집: 시세(KIS/yfinance) + 뉴스(네이버/RSS/Finnhub) + 공시(DART/EDGAR)
+- [x] KIS 인증 + 웹소켓 실시간 시세 수신 (국내/해외 체결·호가 DTO 파싱까지)
+- [ ] KIS 실시간 tick 저장 (`korea_trades` / `korea_orderbooks`, §4.2)
+- [ ] 데이터 수집: 일봉 시세(KIS/yfinance) + 뉴스(네이버/RSS/Finnhub) + 공시(DART/EDGAR)
 - [ ] DB 스키마 구축 (§4.2, §6.2, §8.1)
 - [ ] 전처리: dedup, NER 종목 매핑, 청킹·임베딩
 - [ ] 벡터 RAG (하이브리드 + 시간 가중치)

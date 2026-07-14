@@ -4,6 +4,10 @@
 - 이 저장소의 목적·아키텍처·데이터 스키마·수집 대상은 **`docs/README.md`** 에 정의되어 있다.
 - 데이터 저장 형식, 테이블 설계, 수집 주기, 종목/지표 범위를 결정하기 전에
   `docs/README.md`(특히 §3 수집, §4 저장 스키마)를 먼저 확인한다.
+- **단, `docs/README.md`는 첫 설계 초안이다. 100% 신뢰하지 말고 참고 자료로 취급한다.**
+  - 문서와 실제 코드가 다르면 **코드가 소스 오브 트루스** — 문서를 근거로 코드를 되돌리지 않는다.
+  - 구현 중 설계가 문서와 달라지면(스키마 변경, 테이블 추가/삭제, 수집 방식 변경 등)
+    해당 작업에서 `docs/README.md`의 관련 섹션도 **함께 갱신**한다 (문서 갱신은 Claude가 해도 됨).
 
 ## 학습 모드 (최우선 — 반드시 지킬 것)
 - 이 프로젝트는 **사용자가 직접 코드를 작성하며 학습**하는 것이 목적이다.
@@ -38,6 +42,30 @@ class OHLCVQuery(BaseModel):
     ticker: str
     interval: Interval = Interval.DAY_1
 ```
+
+## 데이터베이스 / 의존성 주입
+
+- 데이터베이스 연결, 트랜잭션, ORM 모델과 쿼리는 **SQLAlchemy**를 사용한다.
+  DB 드라이버를 애플리케이션 코드에서 직접 호출하지 않는다.
+- 의존성 주입은 **Python Dependency Injector**를 사용한다.
+  - 공식 문서: <https://python-dependency-injector.ets-labs.org/>
+  - FastAPI + SQLAlchemy 예제:
+    <https://python-dependency-injector.ets-labs.org/examples/fastapi-sqlalchemy.html>
+- `containers.DeclarativeContainer`에 설정, DB 엔진/세션 팩토리, repository,
+  service provider를 선언한다. 애플리케이션 진입점은 컨테이너를 생성하고 필요한
+  모듈을 wiring한다.
+- `Settings` 인스턴스를 provider로 등록하고, DB URL 등 개별 설정값은
+  `settings.provided.<field>`로 의존 객체에 주입한다. 컨테이너 초기화 코드에서
+  `from_value()`로 필드를 다시 복사하거나 연결 문자열을 하드코딩하지 않는다.
+- 엔진과 세션 팩토리는 애플리케이션 생명주기 동안 재사용할 수 있지만,
+  `Session`/`AsyncSession` 인스턴스는 싱글턴으로 공유하지 않는다. 세션은 작업 단위마다
+  생성하고 성공 시 commit, 실패 시 rollback한 뒤 항상 close한다.
+- 데이터베이스 스키마 생성과 변경은 **Alembic revision**으로만 관리한다.
+  애플리케이션 코드나 시작 과정에서 `Base.metadata.create_all()`을 호출하지 않는다.
+- repository와 service는 생성자 주입을 기본으로 하며, 내부에서 전역 컨테이너를
+  조회하는 Service Locator 패턴을 사용하지 않는다.
+- 테스트에서는 실제 전역 의존성을 교체하지 말고 Dependency Injector의 provider
+  override를 사용해 DB 또는 repository를 격리한다.
 
 ## Docstring
 - 함수를 작성할 때는 **구글 스타일 docstring**을 작성한다.

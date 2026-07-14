@@ -36,3 +36,26 @@ class KISWebSocketSubscription(KISBaseModel):
 
     tr_id: str
     tr_key: str
+
+
+class KISWebSocketSubscriptionResponseHeader(KISBaseModel):
+    tr_id: str
+    tr_key: str
+    encrypt: str | None = None
+
+
+class KISWebSocketSubscriptionResponseBody(KISBaseModel):
+    rt_cd: str
+    msg_cd: str
+    msg1: str
+
+
+class KISWebSocketSubscriptionResponse(KISBaseModel):
+    header: KISWebSocketSubscriptionResponseHeader
+    body: KISWebSocketSubscriptionResponseBody
+
+    @property
+    def is_success(self) -> bool:
+        """KIS 응답 코드가 성공인지 반환한다."""
+
+        return self.body.rt_cd == "0"

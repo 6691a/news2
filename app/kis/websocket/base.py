@@ -6,12 +6,15 @@ from collections.abc import AsyncIterator
 from contextlib import suppress
 
 import websockets
+from pydantic import ValidationError
 from websockets.protocol import State
 
 from app.core.config import Settings
 from app.kis.exceptions import (
     KISWebSocketNotConnectedError,
     KISWebSocketSubscriptionLimitError,
+    KISWebSocketSubscriptionRejectedError,
+    KISWebSocketSubscriptionTimeoutError,
 )
 from app.kis.schemas import (
     KISTrType,
@@ -20,6 +23,7 @@ from app.kis.schemas import (
     KISWebSocketSubscriptionHeader,
     KISWebSocketSubscriptionInput,
     KISWebSocketSubscriptionMessage,
+    KISWebSocketSubscriptionResponse,
     KISWebSocketTokenResponse,
 )
 
@@ -36,6 +40,7 @@ class KISBaseWebSocketQuote(ABC):
         queue_maxsize: int = 10000,
         reconnect_min_uptime: float = 1.0,
         reconnect_max_backoff: float = 30.0,
+        subscription_ack_timeout: float = 5.0,
     ) -> None:
         """설정과 승인 토큰으로 공용 시세 웹소켓 기반을 초기화한다.
 
@@ -45,13 +50,16 @@ class KISBaseWebSocketQuote(ABC):
             queue_maxsize: 수신 큐 최대 길이.
             reconnect_min_uptime: 짧은 연결로 판단할 기준 시간(초).
             reconnect_max_backoff: 재연결 백오프 상한(초).
+            subscription_ack_timeout: 모든 구독 확인을 기다릴 최대 시간(초).
 
         Raises:
-            ValueError: queue_maxsize가 0 이하인 경우.
+            ValueError: 큐 크기 또는 구독 확인 시간이 0 이하인 경우.
         """
 
         if queue_maxsize <= 0:
             raise ValueError("queue_maxsize must be positive")
+        if subscription_ack_timeout <= 0:
+            raise ValueError("subscription_ack_timeout must be positive")
 
         self.token = token
         self.kis_virtual = settings.kis_virtual
@@ -61,9 +69,13 @@ class KISBaseWebSocketQuote(ABC):
         self._queue_maxsize = queue_maxsize
         self._reconnect_min_uptime = reconnect_min_uptime
         self._reconnect_max_backoff = reconnect_max_backoff
+        self._subscription_ack_timeout = subscription_ack_timeout
 
         self._ws: websockets.ClientConnection | None = None
         self._requested_subscriptions: set[KISWebSocketSubscription] = set()
+        self._active_subscriptions: set[KISWebSocketSubscription] = set()
+        self._subscriptions_ready = asyncio.Event()
+        self._subscriptions_ready.set()
         self._queue: asyncio.Queue[str] = asyncio.Queue(maxsize=queue_maxsize)
         self._dropped_messages = 0
         self._subscription_lock = asyncio.Lock()
@@ -73,6 +85,12 @@ class KISBaseWebSocketQuote(ABC):
         """현재 요청된 구독의 불변 스냅샷을 반환한다."""
 
         return frozenset(self._requested_subscriptions)
+
+    @property
+    def active_subscriptions(self) -> frozenset[KISWebSocketSubscription]:
+        """KIS가 확인한 현재 연결의 구독 스냅샷을 반환한다."""
+
+        return frozenset(self._active_subscriptions)
 
     @property
     def dropped_messages(self) -> int:
@@ -172,6 +190,14 @@ class KISBaseWebSocketQuote(ABC):
             for subscription in tuple(self._requested_subscriptions):
                 await self._send(subscription, KISTrType.SUBSCRIBE, ws=ws)
 
+    def _update_subscriptions_ready(self) -> None:
+        """요청한 모든 구독의 확인 여부를 갱신한다."""
+
+        if self._requested_subscriptions <= self._active_subscriptions:
+            self._subscriptions_ready.set()
+        else:
+            self._subscriptions_ready.clear()
+
     async def _subscribe(self, subscription: KISWebSocketSubscription) -> None:
         """공용 구독을 요청 목록에 추가하고 연결 중이면 전송한다.
 
@@ -190,6 +216,7 @@ class KISBaseWebSocketQuote(ABC):
                 raise KISWebSocketSubscriptionLimitError(KIS_MAX_SUBSCRIPTIONS)
 
             self._requested_subscriptions.add(subscription)
+            self._update_subscriptions_ready()
 
             try:
                 await self._send(subscription, KISTrType.SUBSCRIBE)
@@ -208,6 +235,7 @@ class KISBaseWebSocketQuote(ABC):
                 return
 
             self._requested_subscriptions.discard(subscription)
+            self._update_subscriptions_ready()
 
             try:
                 await self._send(subscription, KISTrType.UNSUBSCRIBE)
@@ -223,12 +251,19 @@ class KISBaseWebSocketQuote(ABC):
         async for ws in websockets.connect(self._get_domain(), ping_interval=None):
             self._ws = ws
             started = loop.time()
+            self._active_subscriptions.clear()
+            self._update_subscriptions_ready()
+            receive_task = asyncio.create_task(self._receive(ws))
             try:
                 await self._resubscribe_all(ws)
-                await self._receive(ws)
+                await self._wait_for_subscription_acknowledgements(receive_task)
+                await receive_task
             except websockets.ConnectionClosed:
                 pass
             finally:
+                receive_task.cancel()
+                with suppress(asyncio.CancelledError, Exception):
+                    await receive_task
                 self._ws = None
 
             if loop.time() - started < self._reconnect_min_uptime:
@@ -243,8 +278,45 @@ class KISBaseWebSocketQuote(ABC):
             else:
                 short_streak = 0
 
+    async def _wait_for_subscription_acknowledgements(
+        self,
+        receive_task: asyncio.Task[None],
+    ) -> None:
+        """모든 요청 구독이 확인되거나 수신이 종료될 때까지 기다린다.
+
+        Args:
+            receive_task: 구독 응답을 처리하는 수신 태스크.
+
+        Raises:
+            KISWebSocketSubscriptionTimeoutError: 제한 시간 내에 모든 구독이 확인되지 않은 경우.
+        """
+
+        if self._subscriptions_ready.is_set():
+            return
+
+        ready_task = asyncio.create_task(self._subscriptions_ready.wait())
+        try:
+            done, _ = await asyncio.wait(
+                {receive_task, ready_task},
+                timeout=self._subscription_ack_timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not done:
+                pending = frozenset(
+                    (subscription.tr_id, subscription.tr_key)
+                    for subscription in self._requested_subscriptions - self._active_subscriptions
+                )
+                raise KISWebSocketSubscriptionTimeoutError(pending)
+
+            if receive_task in done:
+                await receive_task
+        finally:
+            ready_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await ready_task
+
     async def _receive(self, ws: websockets.ClientConnection) -> None:
-        """메시지를 수신해 PINGPONG은 응답하고 나머지는 큐로 넘긴다.
+        """메시지를 수신해 제어 JSON은 처리하고 시세 프레임만 큐로 넘긴다.
 
         Args:
             ws: 메시지를 읽을 연결.
@@ -258,7 +330,64 @@ class KISBaseWebSocketQuote(ABC):
                 await ws.pong(message)
                 continue
 
+            if message.lstrip().startswith("{"):
+                try:
+                    response = KISWebSocketSubscriptionResponse.model_validate_json(message)
+                except ValidationError as error:
+                    logger.warning(
+                        "Invalid KIS WebSocket control message skipped: %s; raw=%r",
+                        error,
+                        message[:200],
+                    )
+                    continue
+
+                self._handle_subscription_response(response)
+                continue
+
             self._enqueue(message)
+
+    def _handle_subscription_response(
+        self,
+        response: KISWebSocketSubscriptionResponse,
+    ) -> None:
+        """KIS 구독 응답을 활성 상태에 반영하거나 거절 예외로 변환한다.
+
+        Args:
+            response: 검증된 KIS 구독 또는 해지 응답.
+
+        Raises:
+            KISWebSocketSubscriptionRejectedError: 중복 구독 외의 실패 응답인 경우.
+        """
+
+        subscription = KISWebSocketSubscription(
+            tr_id=response.header.tr_id,
+            tr_key=response.header.tr_key,
+        )
+        message = response.body.msg1
+        already_subscribed = "ALREADY IN SUBSCRIBE" in message.upper()
+
+        if not response.is_success and not already_subscribed:
+            raise KISWebSocketSubscriptionRejectedError(
+                tr_id=response.header.tr_id,
+                tr_key=response.header.tr_key,
+                msg_cd=response.body.msg_cd,
+                msg1=message,
+            )
+
+        if already_subscribed:
+            logger.warning(
+                "KIS WebSocket subscription already active: tr_id=%s, tr_key=%s, msg=%s",
+                subscription.tr_id,
+                subscription.tr_key,
+                message,
+            )
+
+        if message.upper().startswith("UNSUBSCRIBE"):
+            self._active_subscriptions.discard(subscription)
+        elif subscription in self._requested_subscriptions:
+            self._active_subscriptions.add(subscription)
+
+        self._update_subscriptions_ready()
 
     @staticmethod
     def _is_pingpong(message: str) -> bool:
@@ -275,7 +404,7 @@ class KISBaseWebSocketQuote(ABC):
         header = payload.get("header")
         return isinstance(header, dict) and header.get("tr_id") == "PINGPONG"
 
-    async def stream(self) -> AsyncIterator[str]:
+    async def _stream_raw(self) -> AsyncIterator[str]:
         """수신 큐의 원문 메시지를 도착 순서대로 내보낸다.
 
         Yields:

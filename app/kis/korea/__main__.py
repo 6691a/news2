@@ -33,6 +33,11 @@ async def main() -> None:
 
     async with asyncio.TaskGroup() as task_group:
         task_group.create_task(quote.run())
+        # TODO(사용자): quote.stream()이 typed DTO stream이 되면 이 루프를 갱신한다.
+        #  1차: DTO 필드 로깅 (예: event.stock_code, event.current_price) +
+        #       KISKoreaTickRepository로 건별 저장 (isinstance로 Trade/Orderbook 분기).
+        #       저장 실패(DB 다운 등)는 로그 후 폐기 — 재시도 큐는 과잉.
+        #  2차(선택): N건 또는 T초마다 flush하는 버퍼링으로 리팩터.
         async for message in quote.stream():
             logger.info("tick: %s", message)
 

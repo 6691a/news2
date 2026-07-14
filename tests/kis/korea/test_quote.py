@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from typing import cast
 
 import pytest
@@ -7,9 +9,11 @@ from app.kis.korea.quote import KISKoreaWebSocketQuote
 from app.kis.korea.schemas import (
     KISKoreaStockCode,
     KISKoreaSubscription,
+    KISKoreaTrade,
     KISKoreaTrId,
 )
 from app.kis.schemas import KISWebSocketSubscription, KISWebSocketTokenResponse
+from tests.kis.korea.fixtures import SK_HYNIX_TRADE_FRAMES, SUBSCRIBE_SUCCESS_TRADE
 
 
 def _make_settings() -> Settings:
@@ -82,3 +86,40 @@ async def test_trade_and_orderbook_for_same_stock_are_distinct() -> None:
     )
 
     assert len(quote.subscriptions) == 2
+
+
+@pytest.mark.asyncio
+async def test_stream_yields_parsed_korea_trade() -> None:
+    quote = make_quote()
+    quote._enqueue(SK_HYNIX_TRADE_FRAMES[0])
+
+    event = await asyncio.wait_for(anext(quote.stream()), timeout=0.1)
+
+    assert isinstance(event, KISKoreaTrade)
+    assert event.stock_code == "000660"
+
+
+@pytest.mark.asyncio
+async def test_stream_skips_korea_json_control_message() -> None:
+    quote = make_quote()
+    quote._enqueue(SUBSCRIBE_SUCCESS_TRADE)
+    quote._enqueue(SK_HYNIX_TRADE_FRAMES[0])
+
+    event = await asyncio.wait_for(anext(quote.stream()), timeout=0.1)
+
+    assert isinstance(event, KISKoreaTrade)
+
+
+@pytest.mark.asyncio
+async def test_stream_warns_and_continues_after_invalid_korea_frame(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    quote = make_quote()
+    quote._enqueue("0|H0STCNT0|001|짧은본문")
+    quote._enqueue(SK_HYNIX_TRADE_FRAMES[0])
+
+    with caplog.at_level(logging.WARNING, logger="app.kis.korea.quote"):
+        event = await asyncio.wait_for(anext(quote.stream()), timeout=0.1)
+
+    assert isinstance(event, KISKoreaTrade)
+    assert "짧은본문" in caplog.text

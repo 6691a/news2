@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 import json
+import logging
 from contextlib import suppress
 from typing import cast
 
@@ -9,7 +10,11 @@ import websockets
 from websockets.protocol import State
 
 from app.core.config import Settings
-from app.kis.exceptions import KISWebSocketSubscriptionLimitError
+from app.kis.exceptions import (
+    KISWebSocketSubscriptionLimitError,
+    KISWebSocketSubscriptionRejectedError,
+    KISWebSocketSubscriptionTimeoutError,
+)
 from app.kis.schemas import (
     KISTrType,
     KISWebSocketSubscription,
@@ -133,6 +138,31 @@ def make_subscription(index: int = 0) -> KISWebSocketSubscription:
     )
 
 
+def make_subscription_response(
+    *,
+    rt_cd: str = "0",
+    msg_cd: str = "OPSP0000",
+    msg1: str = "SUBSCRIBE SUCCESS",
+) -> str:
+    """테스트용 KIS 구독 응답 JSON을 만든다.
+
+    Args:
+        rt_cd: KIS 성공 또는 실패 코드.
+        msg_cd: KIS 응답 메시지 코드.
+        msg1: KIS 응답 메시지.
+
+    Returns:
+        `TR00`/`KEY00` 구독에 대한 JSON 문자열.
+    """
+
+    return json.dumps(
+        {
+            "header": {"tr_id": "TR00", "tr_key": "KEY00", "encrypt": "N"},
+            "body": {"rt_cd": rt_cd, "msg_cd": msg_cd, "msg1": msg1},
+        }
+    )
+
+
 def test_payload_uses_generic_websocket_subscription() -> None:
     quote = make_quote()
     subscription = KISWebSocketSubscription(
@@ -189,6 +219,70 @@ async def test_pingpong_is_answered_without_entering_stream_queue() -> None:
     await receive_task
 
     assert websocket.pongs == [message]
+    assert quote._queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_subscription_success_is_recorded_without_entering_stream_queue() -> None:
+    quote = make_quote()
+    subscription = make_subscription()
+    await quote.subscribe_wire(subscription)
+    websocket = FakeWebSocket(messages=[make_subscription_response()])
+    await websocket.close()
+
+    await quote._receive(cast(websockets.ClientConnection, websocket))
+
+    assert quote.active_subscriptions == frozenset({subscription})
+    assert quote._queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_subscription_rejection_raises_response_error() -> None:
+    quote = make_quote()
+    await quote.subscribe_wire(make_subscription())
+    websocket = FakeWebSocket(
+        messages=[
+            make_subscription_response(
+                rt_cd="1",
+                msg_cd="OPSP9999",
+                msg1="INVALID SUBSCRIPTION",
+            )
+        ]
+    )
+    await websocket.close()
+
+    with pytest.raises(KISWebSocketSubscriptionRejectedError) as captured:
+        await quote._receive(cast(websockets.ClientConnection, websocket))
+
+    assert captured.value.tr_id == "TR00"
+    assert captured.value.tr_key == "KEY00"
+    assert captured.value.msg_cd == "OPSP9999"
+    assert captured.value.msg1 == "INVALID SUBSCRIPTION"
+
+
+@pytest.mark.asyncio
+async def test_already_subscribed_is_treated_as_active(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    quote = make_quote()
+    subscription = make_subscription()
+    await quote.subscribe_wire(subscription)
+    websocket = FakeWebSocket(
+        messages=[
+            make_subscription_response(
+                rt_cd="1",
+                msg_cd="OPSP0001",
+                msg1="ALREADY IN SUBSCRIBE",
+            )
+        ]
+    )
+    await websocket.close()
+
+    with caplog.at_level(logging.WARNING, logger="app.kis.websocket.base"):
+        await quote._receive(cast(websockets.ClientConnection, websocket))
+
+    assert quote.active_subscriptions == frozenset({subscription})
+    assert "ALREADY IN SUBSCRIBE" in caplog.text
     assert quote._queue.empty()
 
 
@@ -275,10 +369,29 @@ async def test_run_propagates_fatal_error(
 
 
 @pytest.mark.asyncio
+async def test_run_raises_when_subscription_acknowledgement_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    quote = make_quote(subscription_ack_timeout=0.01)
+    await quote.subscribe_wire(make_subscription())
+    connection = DelayedConnection(FakeWebSocket())
+    connection.allow_connection.set()
+    monkeypatch.setattr(
+        "app.kis.websocket.base.websockets.connect",
+        lambda *_args, **_kwargs: connection,
+    )
+
+    with pytest.raises(KISWebSocketSubscriptionTimeoutError) as captured:
+        await quote.run()
+
+    assert captured.value.pending_subscriptions == frozenset({("TR00", "KEY00")})
+
+
+@pytest.mark.asyncio
 async def test_stream_yields_enqueued_message() -> None:
     quote = make_quote()
     quote._enqueue("tick")
 
-    message = await asyncio.wait_for(quote.stream().__anext__(), timeout=0.1)
+    message = await asyncio.wait_for(quote._stream_raw().__anext__(), timeout=0.1)
 
     assert message == "tick"
