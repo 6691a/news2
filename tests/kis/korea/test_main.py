@@ -6,9 +6,11 @@ from dependency_injector import providers
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.containers import container
+from app.instruments.models import Instrument, Market
 from app.kis.korea.__main__ import main
 from app.kis.korea.schemas import (
     KISKoreaOrderbook,
+    KISKoreaStockCode,
     KISKoreaSubscription,
     KISKoreaTrade,
     KISKoreaTrId,
@@ -47,6 +49,19 @@ class FakeRepository:
             raise SQLAlchemyError("database unavailable")
 
 
+class FakeInstrumentRepository:
+    """테스트용 추적 종목 목록을 반환한다."""
+
+    async def list_watched(self) -> list[Instrument]:
+        """국내 두 종목과 필터링할 해외 한 종목을 반환한다."""
+
+        return [
+            Instrument(ticker="005930", market=Market.KRX, name="삼성전자"),
+            Instrument(ticker="000660", market=Market.KRX, name="SK하이닉스"),
+            Instrument(ticker="AAPL", market=Market.NASDAQ, name="Apple"),
+        ]
+
+
 @pytest.mark.asyncio
 async def test_main_continues_after_tick_save_failure_and_disposes_database() -> None:
     events: list[KISKoreaTrade | KISKoreaOrderbook] = []
@@ -72,14 +87,17 @@ async def test_main_continues_after_tick_save_failure_and_disposes_database() ->
     with (
         container.korea_websocket_quote.override(providers.Object(FakeQuote())),
         container.korea_tick_repository.override(providers.Object(repository)),
+        container.instrument_repository.override(providers.Object(FakeInstrumentRepository())),
         container.database.override(providers.Object(database)),
     ):
         await main()
 
     assert [event for event, _ in repository.calls] == events
-    assert {subscription.tr_id for subscription in subscriptions} == {
-        KISKoreaTrId.STOCK_TRADE_KRX,
-        KISKoreaTrId.STOCK_ORDERBOOK_KRX,
+    assert {(subscription.code, subscription.tr_id) for subscription in subscriptions} == {
+        (KISKoreaStockCode.SAMSUNG_ELECTRONICS, KISKoreaTrId.STOCK_TRADE_KRX),
+        (KISKoreaStockCode.SAMSUNG_ELECTRONICS, KISKoreaTrId.STOCK_ORDERBOOK_KRX),
+        (KISKoreaStockCode.SK_HYNIX, KISKoreaTrId.STOCK_TRADE_KRX),
+        (KISKoreaStockCode.SK_HYNIX, KISKoreaTrId.STOCK_ORDERBOOK_KRX),
     }
     assert all(received_at.utcoffset() is not None for _, received_at in repository.calls)
     assert database.disposed is True

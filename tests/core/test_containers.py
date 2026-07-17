@@ -2,12 +2,21 @@ import pytest
 from dependency_injector import providers
 
 from app.core.containers import Container
+from app.instruments.repository import InstrumentRepository
 from app.kis.auth import KISAuth
 from app.kis.korea.quote import KISKoreaWebSocketQuote
 from app.kis.korea.repository import KISKoreaTickRepository
 from app.kis.overseas.quote import KISOverseasWebSocketQuote
 from app.kis.overseas.repository import KISOverseasTickRepository
 from app.kis.schemas import KISWebSocketTokenResponse
+
+
+def test_container_provides_instrument_repository() -> None:
+    container = Container()
+
+    repository = container.instrument_repository()
+
+    assert isinstance(repository, InstrumentRepository)
 
 
 def test_container_provides_kis_tick_repositories() -> None:

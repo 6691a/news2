@@ -11,6 +11,8 @@ from app.core.containers import Container, container
 from app.core.database import Database
 from app.core.logging import configure_logging, get_logger
 from app.core.models import utc_now
+from app.instruments.models import Market
+from app.instruments.repository import InstrumentRepository
 from app.kis.korea.quote import KISKoreaWebSocketQuote
 from app.kis.korea.repository import KISKoreaTickRepository
 from app.kis.korea.schemas import (
@@ -33,6 +35,10 @@ async def main(
         KISKoreaTickRepository,
         Provide[Container.korea_tick_repository],
     ],
+    instrument_repository: Annotated[
+        InstrumentRepository,
+        Provide[Container.instrument_repository],
+    ],
     database: Annotated[
         Database,
         Provide[Container.database],
@@ -41,16 +47,21 @@ async def main(
     """한국주식 실시간 시세를 수신해 DB에 저장한다."""
 
     try:
-        for tr_id in (
-            KISKoreaTrId.STOCK_TRADE_KRX,
-            KISKoreaTrId.STOCK_ORDERBOOK_KRX,
-        ):
-            await quote.subscribe(
-                KISKoreaSubscription(
-                    code=KISKoreaStockCode.SAMSUNG_ELECTRONICS,
-                    tr_id=tr_id,
+        watched_instruments = await instrument_repository.list_watched()
+        for instrument in watched_instruments:
+            if instrument.market is not Market.KRX:
+                continue
+
+            for tr_id in (
+                KISKoreaTrId.STOCK_TRADE_KRX,
+                KISKoreaTrId.STOCK_ORDERBOOK_KRX,
+            ):
+                await quote.subscribe(
+                    KISKoreaSubscription(
+                        code=KISKoreaStockCode(instrument.ticker),
+                        tr_id=tr_id,
+                    )
                 )
-            )
 
         async with asyncio.TaskGroup() as task_group:
             task_group.create_task(quote.run())

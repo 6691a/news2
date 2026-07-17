@@ -2,6 +2,7 @@ from dependency_injector import containers, providers
 
 from app.core.config import settings as app_settings
 from app.core.database import Database
+from app.instruments.repository import InstrumentRepository
 from app.kis.auth import KISAuth
 from app.kis.korea.quote import KISKoreaWebSocketQuote
 from app.kis.korea.repository import KISKoreaTickRepository
@@ -48,6 +49,10 @@ class Container(containers.DeclarativeContainer):
     )
     overseas_tick_repository = providers.Factory(
         KISOverseasTickRepository,
+        session_factory=database.provided.session_factory,
+    )
+    instrument_repository = providers.Factory(
+        InstrumentRepository,
         session_factory=database.provided.session_factory,
     )
 

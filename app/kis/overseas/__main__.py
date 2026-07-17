@@ -11,6 +11,8 @@ from app.core.containers import Container, container
 from app.core.database import Database
 from app.core.logging import configure_logging, get_logger
 from app.core.models import utc_now
+from app.instruments.models import Market
+from app.instruments.repository import InstrumentRepository
 from app.kis.overseas.quote import KISOverseasWebSocketQuote
 from app.kis.overseas.repository import KISOverseasTickRepository
 from app.kis.overseas.schemas import (
@@ -23,6 +25,11 @@ from app.kis.overseas.schemas import (
 configure_logging(container.settings())
 logger = get_logger(__name__)
 
+KIS_MARKET_BY_INSTRUMENT_MARKET: dict[Market, KISOverseasMarket] = {
+    Market.NASDAQ: KISOverseasMarket.NASDAQ,
+    Market.NYSE_ARCA: KISOverseasMarket.AMEX,
+}
+
 
 @inject
 async def main(
@@ -34,6 +41,10 @@ async def main(
         KISOverseasTickRepository,
         Provide[Container.overseas_tick_repository],
     ],
+    instrument_repository: Annotated[
+        InstrumentRepository,
+        Provide[Container.instrument_repository],
+    ],
     database: Annotated[
         Database,
         Provide[Container.database],
@@ -42,17 +53,23 @@ async def main(
     """미국주식 실시간 시세를 수신해 DB에 저장한다."""
 
     try:
-        for tr_id in (
-            KISOverseasTrId.TRADE,
-            KISOverseasTrId.ORDERBOOK,
-        ):
-            await quote.subscribe(
-                KISOverseasSubscription(
-                    code=KISOverseasStockCode.APPLE,
-                    market=KISOverseasMarket.NASDAQ,
-                    tr_id=tr_id,
+        watched_instruments = await instrument_repository.list_watched()
+        for instrument in watched_instruments:
+            kis_market = KIS_MARKET_BY_INSTRUMENT_MARKET.get(instrument.market)
+            if kis_market is None:
+                continue
+
+            for tr_id in (
+                KISOverseasTrId.TRADE,
+                KISOverseasTrId.ORDERBOOK,
+            ):
+                await quote.subscribe(
+                    KISOverseasSubscription(
+                        code=KISOverseasStockCode(instrument.ticker),
+                        market=kis_market,
+                        tr_id=tr_id,
+                    )
                 )
-            )
 
         async with asyncio.TaskGroup() as task_group:
             task_group.create_task(quote.run())

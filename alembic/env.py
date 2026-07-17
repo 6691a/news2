@@ -23,6 +23,7 @@ config.set_main_option(
     container.settings().database_url.replace("%", "%%"),
 )
 
+import_module("app.instruments.models")
 import_module("app.kis.korea.models")
 import_module("app.kis.overseas.models")
 target_metadata = Base.metadata
