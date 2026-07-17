@@ -1,8 +1,5 @@
 """SQLAlchemy 비동기 데이터베이스 연결을 관리한다."""
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -35,26 +32,6 @@ class Database:
             bind=self.engine,
             expire_on_commit=False,
         )
-
-    @asynccontextmanager
-    async def session(self) -> AsyncIterator[AsyncSession]:
-        """독립 세션을 열고 작업 결과에 따라 트랜잭션을 정리한다.
-
-        Yields:
-            호출 작업에만 사용되는 비동기 세션.
-
-        Raises:
-            BaseException: 작업 중 발생한 원래 예외를 rollback 후 다시 발생시킨다.
-        """
-        session = self.session_factory()
-        try:
-            yield session
-            await session.commit()
-        except BaseException:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
 
     async def check_connection(self) -> None:
         """간단한 쿼리로 데이터베이스 연결 가능 여부를 확인한다."""

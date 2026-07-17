@@ -1,6 +1,6 @@
-import logging
 from collections.abc import AsyncIterator
 
+from app.core.logging import get_logger
 from app.kis.overseas.schemas import (
     KISOverseasOrderbook,
     KISOverseasSubscription,
@@ -9,7 +9,7 @@ from app.kis.overseas.schemas import (
 )
 from app.kis.websocket.base import KISBaseWebSocketQuote
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class KISOverseasWebSocketQuote(KISBaseWebSocketQuote):
@@ -43,9 +43,9 @@ class KISOverseasWebSocketQuote(KISBaseWebSocketQuote):
                 events = parse_frame(raw)
             except ValueError as error:
                 logger.warning(
-                    "Invalid KIS overseas WebSocket frame skipped: %s; raw=%r",
-                    error,
-                    raw[:200],
+                    "invalid_kis_overseas_websocket_frame",
+                    error=str(error),
+                    raw=raw[:200],
                 )
                 continue
 

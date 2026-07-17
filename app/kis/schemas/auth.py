@@ -1,19 +1,15 @@
-from abc import ABC
-
 from pydantic import Field
 
 from app.kis.schemas.common import KISBaseModel
 
 
-class KISBaseAuthTokenHeader(KISBaseModel, ABC):
-    content_type: str = Field(
-        serialization_alias="Content-Type", default="application/json"
-    )
+class KISBaseAuthTokenHeader(KISBaseModel):
+    content_type: str = Field(serialization_alias="Content-Type", default="application/json")
     accept: str = Field(serialization_alias="Accept", default="text/plain")
     charset: str = "UTF-8"
 
 
-class KISBaseAuthRequest(KISBaseModel, ABC):
+class KISBaseAuthRequest(KISBaseModel):
     app_key: str = Field(serialization_alias="appkey", max_length=36)
     app_secret: str = Field(serialization_alias="appsecret", max_length=180)
 

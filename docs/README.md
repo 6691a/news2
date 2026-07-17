@@ -1,6 +1,6 @@
 # 주식 분석 LLM 시스템 설계 문서
 
-> **버전**: v0.9 · **작성일**: 2026-07-09 · **갱신**: 2026-07-14 (시세 수집을 KIS 웹소켓 실시간으로 확정, tick 저장 스키마 추가)
+> **버전**: v0.9 · **작성일**: 2026-07-09 · **갱신**: 2026-07-17 (KIS 실시간 tick DB 저장 연결)
 > **주의**: 이 문서는 첫 설계 초안 기반이다. 코드와 다르면 코드가 소스 오브 트루스 — 구현하며 계속 갱신한다.
 > **목적**: 확정된 추적 종목 9개(한국 2 + 미국 7, §1.4)에 대한 뉴스·시세 기반 LLM 분석/시그널 생성 시스템의 전체 설계
 > **성격**: 개인 분석 도구 및 AI/LLM 엔지니어링 포트폴리오 프로젝트 (자동매매 아님)
@@ -143,7 +143,7 @@ flowchart TD
     A --> B --> C --> D --> E
 ```
 
-**기술 스택**: FastAPI · LangGraph · PostgreSQL(+pgvector) · Celery · Langfuse
+**기술 스택**: FastAPI · LangGraph · PostgreSQL(+pgvector) · Celery · structlog · Langfuse
 · Claude/Gemini API (Phase 3에서 오픈소스 LLM + LoRA 추가 검토)
 
 ---
@@ -187,6 +187,17 @@ flowchart TD
 - KIS WebSocket 네트워크 단절은 백오프 후 재연결하지만, 필수 구독 거절 또는
   5초 내 구독 확인 실패는 해당 시장 수집 프로세스를 종료해 감시 프로세스가
   재시작하게 한다. `ALREADY IN SUBSCRIBE`는 멱등적 성공으로 처리한다.
+- 국내·해외 실시간 DTO는 수신 직후 SQLAlchemy repository가 건별 트랜잭션으로 저장한다.
+  DB 저장 실패는 해당 tick만 폐기하고 구조화 로그를 남긴 뒤 스트림 수신을 계속한다.
+
+### 3.4 로깅
+
+- 애플리케이션 로깅 API는 **structlog**로 통일한다. 표준 `logging`은 Uvicorn,
+  SQLAlchemy 등 외부 라이브러리 로그를 같은 출력 형식으로 전달하는 내부 계층으로만 사용한다.
+- 로컬 기본값은 `LOG_FORMAT=console`, 운영 환경은 `LOG_FORMAT=json`을 사용한다.
+  로그 시간은 UTC ISO 8601 형식이며 `LOG_LEVEL` 기본값은 `INFO`다.
+- 이벤트 이름은 고정된 `snake_case`로 기록하고, 종목·시장·TR ID·재시도 횟수 등은
+  메시지 문자열에 합치지 않고 구조화 필드로 전달한다.
 
 ---
 
@@ -592,7 +603,7 @@ CREATE TABLE signal_outcomes (
 - [x] 관심 종목 확정 — 총 9개 (§1.4): 삼성전자, SK하이닉스, AAPL, GOOGL, MSFT, META, NVDA, QQQ, SPY
 - [ ] `instruments` 테이블 등록 + 엔티티 별칭(aliases) 입력
 - [x] KIS 인증 + 웹소켓 실시간 시세 수신 (국내/해외 체결·호가 DTO 파싱까지)
-- [ ] KIS 실시간 tick 저장 (`korea_trades` / `korea_orderbooks`, §4.2)
+- [x] KIS 실시간 tick 저장 (국내·해외 체결/호가 테이블, §4.2)
 - [ ] 데이터 수집: 일봉 시세(KIS/yfinance) + 뉴스(네이버/RSS/Finnhub) + 공시(DART/EDGAR)
 - [ ] DB 스키마 구축 (§4.2, §6.2, §8.1)
 - [ ] 전처리: dedup, NER 종목 매핑, 청킹·임베딩

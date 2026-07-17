@@ -1,11 +1,18 @@
 """독립 미국주식 프로세스 엔트리포인트."""
 
 import asyncio
-import logging
+import sys
+from typing import Annotated
 
-from app.core.config import settings
-from app.kis.auth import KISAuth
+from dependency_injector.wiring import Provide, inject
+from sqlalchemy.exc import SQLAlchemyError
+
+from app.core.containers import Container, container
+from app.core.database import Database
+from app.core.logging import configure_logging, get_logger
+from app.core.models import utc_now
 from app.kis.overseas.quote import KISOverseasWebSocketQuote
+from app.kis.overseas.repository import KISOverseasTickRepository
 from app.kis.overseas.schemas import (
     KISOverseasMarket,
     KISOverseasStockCode,
@@ -13,30 +20,68 @@ from app.kis.overseas.schemas import (
     KISOverseasTrId,
 )
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-)
-logger = logging.getLogger(__name__)
+configure_logging(container.settings())
+logger = get_logger(__name__)
 
 
-async def main() -> None:
-    """승인 키를 발급하고 미국주식 실시간 시세를 수신한다."""
+@inject
+async def main(
+    quote: Annotated[
+        KISOverseasWebSocketQuote,
+        Provide[Container.overseas_websocket_quote],
+    ],
+    repository: Annotated[
+        KISOverseasTickRepository,
+        Provide[Container.overseas_tick_repository],
+    ],
+    database: Annotated[
+        Database,
+        Provide[Container.database],
+    ],
+) -> None:
+    """미국주식 실시간 시세를 수신해 DB에 저장한다."""
 
-    token = await KISAuth(settings).get_websocket_token()
-    quote = KISOverseasWebSocketQuote(settings=settings, token=token)
-    await quote.subscribe(
-        KISOverseasSubscription(
-            code=KISOverseasStockCode.APPLE,
-            market=KISOverseasMarket.NASDAQ,
-            tr_id=KISOverseasTrId.TRADE,
-        )
-    )
+    try:
+        for tr_id in (
+            KISOverseasTrId.TRADE,
+            KISOverseasTrId.ORDERBOOK,
+        ):
+            await quote.subscribe(
+                KISOverseasSubscription(
+                    code=KISOverseasStockCode.APPLE,
+                    market=KISOverseasMarket.NASDAQ,
+                    tr_id=tr_id,
+                )
+            )
 
-    async with asyncio.TaskGroup() as task_group:
-        task_group.create_task(quote.run())
-        async for message in quote.stream():
-            logger.info("tick: %s", message)
+        async with asyncio.TaskGroup() as task_group:
+            task_group.create_task(quote.run())
+            async for message in quote.stream():
+                received_at = utc_now()
+                try:
+                    await repository.save(message, received_at)
+                except SQLAlchemyError:
+                    logger.exception(
+                        "kis_tick_persist_failed",
+                        market="overseas",
+                        symbol=message.symbol,
+                        tick_type=type(message).__name__,
+                        received_at=received_at.isoformat(),
+                    )
+                    continue
+
+                logger.info(
+                    "kis_tick_saved",
+                    market="overseas",
+                    symbol=message.symbol,
+                    tick_type=type(message).__name__,
+                    received_at=received_at.isoformat(),
+                )
+    finally:
+        await database.dispose()
+
+
+container.wire(modules=[sys.modules[__name__]], warn_unresolved=True)
 
 
 if __name__ == "__main__":

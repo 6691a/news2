@@ -2,6 +2,18 @@ from dependency_injector import containers, providers
 
 from app.core.config import settings as app_settings
 from app.core.database import Database
+from app.kis.auth import KISAuth
+from app.kis.korea.quote import KISKoreaWebSocketQuote
+from app.kis.korea.repository import KISKoreaTickRepository
+from app.kis.overseas.quote import KISOverseasWebSocketQuote
+from app.kis.overseas.repository import KISOverseasTickRepository
+from app.kis.schemas import KISWebSocketTokenResponse
+
+
+async def provide_websocket_token(auth: KISAuth) -> KISWebSocketTokenResponse:
+    """KIS 인증 객체로 WebSocket 승인 키를 발급한다."""
+
+    return await auth.get_websocket_token()
 
 
 class Container(containers.DeclarativeContainer):
@@ -11,6 +23,32 @@ class Container(containers.DeclarativeContainer):
     database = providers.Singleton(
         Database,
         database_url=settings.provided.database_url,
+    )
+    kis_auth = providers.Factory(
+        KISAuth,
+        settings=settings,
+    )
+    websocket_token = providers.Coroutine(
+        provide_websocket_token,
+        auth=kis_auth,
+    )
+    korea_websocket_quote = providers.Factory(
+        KISKoreaWebSocketQuote,
+        settings=settings,
+        token=websocket_token,
+    )
+    overseas_websocket_quote = providers.Factory(
+        KISOverseasWebSocketQuote,
+        settings=settings,
+        token=websocket_token,
+    )
+    korea_tick_repository = providers.Factory(
+        KISKoreaTickRepository,
+        session_factory=database.provided.session_factory,
+    )
+    overseas_tick_repository = providers.Factory(
+        KISOverseasTickRepository,
+        session_factory=database.provided.session_factory,
     )
 
 

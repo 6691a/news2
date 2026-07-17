@@ -4,6 +4,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.core.containers import container
+from app.core.logging import configure_logging
+
+
+configure_logging(container.settings())
 
 
 @asynccontextmanager

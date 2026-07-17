@@ -4,11 +4,11 @@ import httpx
 
 from app.core.config import Settings
 from app.kis.schemas import (
-    KISBaseAuthTokenHeader,
     KISAuthRequest,
-    KISAuthTokenResponse,
-    KISAuthTokenRemoveResponse,
     KISAuthTokenRemoveRequest,
+    KISAuthTokenRemoveResponse,
+    KISAuthTokenResponse,
+    KISBaseAuthTokenHeader,
     KISWebSocketTokenResponse,
     KISWebSocketTokenRequest,
 )
@@ -91,7 +91,9 @@ class KISAuth:
 
         headers = KISBaseAuthTokenHeader().model_dump()
         body = KISAuthTokenRemoveRequest(
-            app_key=self.app_key, app_secret=self.app_secret, token=access_token
+            app_key=self.app_key,
+            app_secret=self.app_secret,
+            token=access_token,
         ).model_dump()
 
         async with httpx.AsyncClient() as client:

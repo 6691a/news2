@@ -1,45 +1,85 @@
 """독립 한국주식 프로세스 엔트리포인트."""
 
 import asyncio
-import logging
+import sys
+from typing import Annotated
 
-from app.core.config import settings
-from app.kis.auth import KISAuth
+from dependency_injector.wiring import Provide, inject
+from sqlalchemy.exc import SQLAlchemyError
+
+from app.core.containers import Container, container
+from app.core.database import Database
+from app.core.logging import configure_logging, get_logger
+from app.core.models import utc_now
 from app.kis.korea.quote import KISKoreaWebSocketQuote
+from app.kis.korea.repository import KISKoreaTickRepository
 from app.kis.korea.schemas import (
     KISKoreaStockCode,
     KISKoreaSubscription,
     KISKoreaTrId,
 )
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-)
-logger = logging.getLogger(__name__)
+configure_logging(container.settings())
+logger = get_logger(__name__)
 
 
-async def main() -> None:
-    """승인 키를 발급하고 한국주식 실시간 시세를 수신한다."""
+@inject
+async def main(
+    quote: Annotated[
+        KISKoreaWebSocketQuote,
+        Provide[Container.korea_websocket_quote],
+    ],
+    repository: Annotated[
+        KISKoreaTickRepository,
+        Provide[Container.korea_tick_repository],
+    ],
+    database: Annotated[
+        Database,
+        Provide[Container.database],
+    ],
+) -> None:
+    """한국주식 실시간 시세를 수신해 DB에 저장한다."""
 
-    token = await KISAuth(settings).get_websocket_token()
-    quote = KISKoreaWebSocketQuote(settings=settings, token=token)
-    await quote.subscribe(
-        KISKoreaSubscription(
-            code=KISKoreaStockCode.SAMSUNG_ELECTRONICS,
-            tr_id=KISKoreaTrId.STOCK_TRADE_KRX,
-        )
-    )
+    try:
+        for tr_id in (
+            KISKoreaTrId.STOCK_TRADE_KRX,
+            KISKoreaTrId.STOCK_ORDERBOOK_KRX,
+        ):
+            await quote.subscribe(
+                KISKoreaSubscription(
+                    code=KISKoreaStockCode.SAMSUNG_ELECTRONICS,
+                    tr_id=tr_id,
+                )
+            )
 
-    async with asyncio.TaskGroup() as task_group:
-        task_group.create_task(quote.run())
-        # TODO(사용자): quote.stream()이 typed DTO stream이 되면 이 루프를 갱신한다.
-        #  1차: DTO 필드 로깅 (예: event.stock_code, event.current_price) +
-        #       KISKoreaTickRepository로 건별 저장 (isinstance로 Trade/Orderbook 분기).
-        #       저장 실패(DB 다운 등)는 로그 후 폐기 — 재시도 큐는 과잉.
-        #  2차(선택): N건 또는 T초마다 flush하는 버퍼링으로 리팩터.
-        async for message in quote.stream():
-            logger.info("tick: %s", message)
+        async with asyncio.TaskGroup() as task_group:
+            task_group.create_task(quote.run())
+            async for message in quote.stream():
+                received_at = utc_now()
+                try:
+                    await repository.save(message, received_at)
+                except SQLAlchemyError:
+                    logger.exception(
+                        "kis_tick_persist_failed",
+                        market="korea",
+                        stock_code=message.stock_code,
+                        tick_type=type(message).__name__,
+                        received_at=received_at.isoformat(),
+                    )
+                    continue
+
+                logger.info(
+                    "kis_tick_saved",
+                    market="korea",
+                    stock_code=message.stock_code,
+                    tick_type=type(message).__name__,
+                    received_at=received_at.isoformat(),
+                )
+    finally:
+        await database.dispose()
+
+
+container.wire(modules=[sys.modules[__name__]], warn_unresolved=True)
 
 
 if __name__ == "__main__":

@@ -84,6 +84,16 @@ class OHLCVQuery(BaseModel):
 - 테스트에서는 실제 전역 의존성을 교체하지 말고 Dependency Injector의 provider
   override를 사용해 DB 또는 repository를 격리한다.
 
+## 로깅
+
+- 애플리케이션 코드에서는 `app.core.logging.get_logger()`로 받은 structlog 로거만 사용한다.
+  `logging.getLogger()`와 `logging.basicConfig()`를 개별 모듈에서 직접 호출하지 않는다.
+- structlog와 외부 라이브러리 로그의 handler, processor, renderer 설정은
+  `app.core.logging.configure_logging()`에서만 관리한다.
+- 이벤트 이름은 `snake_case`로 작성하고, 동적 값은 문자열 보간 대신 구조화 필드로 전달한다.
+- 모든 로그 timestamp는 UTC ISO 8601 형식으로 출력한다. 로컬은 `console`, 운영 환경은
+  `json` 형식을 사용하며 `LOG_FORMAT`과 `LOG_LEVEL`은 `Settings`를 통해 주입한다.
+
 ## Docstring
 - 함수를 작성할 때는 **구글 스타일 docstring**을 작성한다.
 - 첫 줄은 한 문장 요약. 인자/반환/예외가 있으면 `Args:` / `Returns:` / `Raises:` 섹션으로 기술한다.

@@ -1,4 +1,23 @@
+from enum import StrEnum
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class LogFormat(StrEnum):
+    """애플리케이션 로그 출력 형식."""
+
+    CONSOLE = "console"
+    JSON = "json"
+
+
+class LogLevel(StrEnum):
+    """애플리케이션에서 허용하는 로그 심각도."""
+
+    DEBUG = "DEBUG"
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+    CRITICAL = "CRITICAL"
 
 
 class Settings(BaseSettings):
@@ -9,6 +28,8 @@ class Settings(BaseSettings):
     )
 
     database_url: str
+    log_format: LogFormat = LogFormat.CONSOLE
+    log_level: LogLevel = LogLevel.INFO
 
     # 한국투자증권
     kis_virtual: bool = False

@@ -1,6 +1,5 @@
 import asyncio
 import json
-import logging
 from abc import ABC
 from collections.abc import AsyncIterator
 from contextlib import suppress
@@ -10,6 +9,7 @@ from pydantic import ValidationError
 from websockets.protocol import State
 
 from app.core.config import Settings
+from app.core.logging import get_logger
 from app.kis.exceptions import (
     KISWebSocketNotConnectedError,
     KISWebSocketSubscriptionLimitError,
@@ -27,7 +27,7 @@ from app.kis.schemas import (
     KISWebSocketTokenResponse,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 KIS_MAX_SUBSCRIPTIONS = 40
 
@@ -270,9 +270,9 @@ class KISBaseWebSocketQuote(ABC):
                 short_streak += 1
                 delay = min(2 ** (short_streak - 1), self._reconnect_max_backoff)
                 logger.warning(
-                    "KIS WebSocket reconnecting in %ss (streak %s)",
-                    delay,
-                    short_streak,
+                    "kis_websocket_reconnecting",
+                    delay_seconds=delay,
+                    short_connection_streak=short_streak,
                 )
                 await asyncio.sleep(delay)
             else:
@@ -335,9 +335,9 @@ class KISBaseWebSocketQuote(ABC):
                     response = KISWebSocketSubscriptionResponse.model_validate_json(message)
                 except ValidationError as error:
                     logger.warning(
-                        "Invalid KIS WebSocket control message skipped: %s; raw=%r",
-                        error,
-                        message[:200],
+                        "invalid_kis_websocket_control_message",
+                        error=str(error),
+                        raw=message[:200],
                     )
                     continue
 
@@ -376,10 +376,10 @@ class KISBaseWebSocketQuote(ABC):
 
         if already_subscribed:
             logger.warning(
-                "KIS WebSocket subscription already active: tr_id=%s, tr_key=%s, msg=%s",
-                subscription.tr_id,
-                subscription.tr_key,
-                message,
+                "kis_websocket_subscription_already_active",
+                tr_id=subscription.tr_id,
+                tr_key=subscription.tr_key,
+                message=message,
             )
 
         if message.upper().startswith("UNSUBSCRIBE"):

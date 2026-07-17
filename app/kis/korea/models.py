@@ -7,7 +7,7 @@ from sqlalchemy import BigInteger, Index, JSON, Numeric, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.core.models import EntityModel, UTCDateTime, utc_now
+from app.core.models import EntityModel, UTCDateTime
 
 
 JSON_DOCUMENT = JSON().with_variant(JSONB(), "postgresql")
@@ -80,7 +80,6 @@ class KoreaTrade(EntityModel):
     received_at: Mapped[datetime] = mapped_column(
         UTCDateTime(),
         nullable=False,
-        default=utc_now,
         server_default=func.now(),
         comment="애플리케이션이 체결 tick을 수신한 UTC 시각",
     )
@@ -142,7 +141,6 @@ class KoreaOrderbook(EntityModel):
     received_at: Mapped[datetime] = mapped_column(
         UTCDateTime(),
         nullable=False,
-        default=utc_now,
         server_default=func.now(),
         comment="애플리케이션이 호가 스냅샷을 수신한 UTC 시각",
     )
