@@ -1,5 +1,14 @@
 # 코딩 규칙
 
+## 에이전트 지침 파일 위치
+
+- Claude 전용 지침은 **`.claude/CLAUDE.md`**, Codex 전용 지침은
+  **`.codex/AGENTS.md`** 에 둔다.
+- 프로젝트 루트에 `AGENTS.md`를 새로 만들지 않는다. 루트에서 발견한 기존 지침은
+  `.codex/AGENTS.md`에 병합한 뒤 루트 파일을 제거한다.
+- 두 지침 파일의 공통 규칙을 변경할 때는 함께 갱신하되, 에이전트별 이름과
+  도구 사용 방식처럼 실행 환경에 종속된 차이는 유지한다.
+
 ## 프로젝트 배경 (작업 전 반드시 읽을 것)
 - 이 저장소의 목적·아키텍처·데이터 스키마·수집 대상은 **`docs/README.md`** 에 정의되어 있다.
 - 데이터 저장 형식, 테이블 설계, 수집 주기, 종목/지표 범위를 결정하기 전에
@@ -62,6 +71,14 @@ class OHLCVQuery(BaseModel):
   생성하고 성공 시 commit, 실패 시 rollback한 뒤 항상 close한다.
 - 데이터베이스 스키마 생성과 변경은 **Alembic revision**으로만 관리한다.
   애플리케이션 코드나 시작 과정에서 `Base.metadata.create_all()`을 호출하지 않는다.
+- 영속 ORM 모델은 `app.core.models.EntityModel`을 상속한다. 공통 `id`, `created_at`,
+  `updated_at`을 개별 모델에서 중복 선언하지 않는다.
+- 모든 `datetime` 컬럼은 `UTCDateTime`을 사용하고 timezone-aware UTC 값만 저장한다.
+  - naive datetime은 저장 단계에서 거부한다.
+  - KST 또는 거래소 현지시각은 timezone을 적용해 UTC로 변환한 뒤 저장한다.
+  - 현지 날짜·시간 원본이 필요하면 `details` JSONB에 문자열로 보존하고, 별도의
+    non-UTC timestamp 컬럼을 만들지 않는다.
+  - PostgreSQL 연결과 Alembic 연결의 세션 timezone도 `UTC`로 설정한다.
 - repository와 service는 생성자 주입을 기본으로 하며, 내부에서 전역 컨테이너를
   조회하는 Service Locator 패턴을 사용하지 않는다.
 - 테스트에서는 실제 전역 의존성을 교체하지 말고 Dependency Injector의 provider

@@ -24,6 +24,7 @@ config.set_main_option(
 )
 
 import_module("app.kis.korea.models")
+import_module("app.kis.overseas.models")
 target_metadata = Base.metadata
 
 
@@ -58,6 +59,7 @@ async def run_async_migrations() -> None:
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args={"server_settings": {"timezone": "UTC"}},
     )
 
     async with connectable.connect() as connection:

@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: news2
       POSTGRES_PASSWORD: news2
     ports:
-      - "5432:5432"
+      - "15432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -18,24 +18,24 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "16379:6379"
     volumes:
       - redisdata:/data
 
-  kis-korea-quote:
-    build: .
-    env_file: .env
-    restart: always
-    # 즉시 크래시-루프 시 재시작 폭주를 완화한다.
-    stop_grace_period: 10s
-
-  kis-overseas-quote:
-    build: .
-    env_file: .env
-    restart: always
-    command: ["python", "-m", "app.kis.overseas"]
-    # 즉시 크래시-루프 시 재시작 폭주를 완화한다.
-    stop_grace_period: 10s
+#  kis-korea-quote:
+#    build: .
+#    env_file: .env
+#    restart: always
+#    # 즉시 크래시-루프 시 재시작 폭주를 완화한다.
+#    stop_grace_period: 10s
+#
+#  kis-overseas-quote:
+#    build: .
+#    env_file: .env
+#    restart: always
+#    command: ["python", "-m", "app.kis.overseas"]
+#    # 즉시 크래시-루프 시 재시작 폭주를 완화한다.
+#    stop_grace_period: 10s
 
 volumes:
   pgdata:

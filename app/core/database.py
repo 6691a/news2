@@ -29,6 +29,7 @@ class Database:
         self.engine: AsyncEngine = create_async_engine(
             database_url,
             pool_pre_ping=True,
+            connect_args={"server_settings": {"timezone": "UTC"}},
         )
         self.session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
             bind=self.engine,

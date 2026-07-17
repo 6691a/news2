@@ -226,30 +226,89 @@ CREATE TABLE ohlcv (
 -- 실시간 tick (KIS 웹소켓 체결/호가 원시 데이터)
 -- 설계 노트:
 --  · 호가 10단계는 JSONB 단일 컬럼 — 소비 패턴이 항상 스냅샷 전체 복원이라 정규화 이득 없음
---  · v1은 stock_code 직저장, instruments 정착 후 FK 전환
+--  · v1은 종목코드 직저장, instruments 정착 후 FK 전환
+--  · 모든 datetime은 timezone-aware UTC. KST/현지 시각 원본은 details JSONB에 보존
+--  · 모든 ORM 모델은 EntityModel의 id/created_at/updated_at 공통 컬럼을 상속
 CREATE TABLE korea_trades (
-  id             BIGSERIAL PRIMARY KEY,   -- 자연키 없음 (같은 초에 다건 체결)
-  stock_code     TEXT NOT NULL,           -- '005930'
-  ts             TIMESTAMPTZ NOT NULL,    -- business_date + trade_time (KST)
-  price          NUMERIC NOT NULL,        -- 체결가
-  volume         BIGINT NOT NULL,         -- 직전 체결 수량
-  cumulative_volume BIGINT NOT NULL,      -- 당일 누적 거래량
-  trade_classification_code TEXT NOT NULL,-- 매수/매도 구분
-  trade_strength NUMERIC,                 -- 체결강도
-  received_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  id                        BIGSERIAL PRIMARY KEY,
+  stock_code                TEXT NOT NULL,
+  event_ts                  TIMESTAMPTZ NOT NULL, -- UTC 체결 시각
+  price                     NUMERIC(28, 8) NOT NULL,
+  volume                    BIGINT NOT NULL,
+  cumulative_volume         BIGINT NOT NULL,
+  cumulative_amount         NUMERIC(28, 8) NOT NULL,
+  trade_strength            NUMERIC(20, 8),
+  best_bid_price            NUMERIC(28, 8) NOT NULL,
+  best_ask_price            NUMERIC(28, 8) NOT NULL,
+  trade_classification_code TEXT NOT NULL,
+  details                   JSONB NOT NULL,
+  received_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at                TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX ON korea_trades (stock_code, ts);
+CREATE INDEX ON korea_trades (stock_code, event_ts);
 
 CREATE TABLE korea_orderbooks (
-  id             BIGSERIAL PRIMARY KEY,
-  stock_code     TEXT NOT NULL,
-  ts             TIMESTAMPTZ NOT NULL,    -- 호가 DTO엔 시각만 있어 received_at의 KST 날짜와 결합
-  levels         JSONB NOT NULL,          -- [{ask_price, bid_price, ask_quantity, bid_quantity} x10]
-  total_ask_quantity BIGINT NOT NULL,
+  id                 BIGSERIAL PRIMARY KEY,
+  stock_code         TEXT NOT NULL,
+  event_ts           TIMESTAMPTZ NOT NULL, -- UTC 호가 시각
+  best_bid_price     NUMERIC(28, 8) NOT NULL,
+  best_ask_price     NUMERIC(28, 8) NOT NULL,
   total_bid_quantity BIGINT NOT NULL,
-  received_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  total_ask_quantity BIGINT NOT NULL,
+  levels             JSONB NOT NULL,
+  details            JSONB NOT NULL,
+  received_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX ON korea_orderbooks (stock_code, ts);
+CREATE INDEX ON korea_orderbooks (stock_code, event_ts);
+
+CREATE TABLE overseas_trades (
+  id                  BIGSERIAL PRIMARY KEY,
+  realtime_symbol     TEXT NOT NULL,
+  symbol              TEXT NOT NULL,
+  market              TEXT NOT NULL,
+  event_ts            TIMESTAMPTZ NOT NULL, -- UTC 체결 시각
+  local_business_date DATE NOT NULL,        -- 거래소 영업일이며 timestamp가 아님
+  decimal_places      SMALLINT NOT NULL,
+  price               NUMERIC(28, 8) NOT NULL,
+  volume              BIGINT NOT NULL,
+  cumulative_volume   BIGINT NOT NULL,
+  cumulative_amount   NUMERIC(28, 8) NOT NULL,
+  best_bid_price      NUMERIC(28, 8) NOT NULL,
+  best_ask_price      NUMERIC(28, 8) NOT NULL,
+  best_bid_quantity   BIGINT NOT NULL,
+  best_ask_quantity   BIGINT NOT NULL,
+  trade_strength      NUMERIC(20, 8),
+  market_type         TEXT NOT NULL,
+  details             JSONB NOT NULL,
+  received_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX ON overseas_trades (symbol, event_ts);
+
+CREATE TABLE overseas_orderbooks (
+  id                 BIGSERIAL PRIMARY KEY,
+  realtime_symbol    TEXT NOT NULL,
+  symbol             TEXT NOT NULL,
+  market             TEXT NOT NULL,
+  event_ts           TIMESTAMPTZ NOT NULL, -- UTC 호가 시각
+  decimal_places     SMALLINT NOT NULL,
+  best_bid_price     NUMERIC(28, 8) NOT NULL,
+  best_ask_price     NUMERIC(28, 8) NOT NULL,
+  best_bid_quantity  BIGINT NOT NULL,
+  best_ask_quantity  BIGINT NOT NULL,
+  total_bid_quantity BIGINT NOT NULL,
+  total_ask_quantity BIGINT NOT NULL,
+  levels             JSONB NOT NULL,
+  details            JSONB NOT NULL,
+  received_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX ON overseas_orderbooks (symbol, event_ts);
 
 -- 수급 동향 (한국 시장: 현물 종목별 + 선물 시장 단위)
 CREATE TABLE investor_flows (

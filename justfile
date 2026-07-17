@@ -2,6 +2,9 @@
 default:
     @just --list
 
+dev service="":
+    docker compose -f compose.local.yaml up -d {{service}}
+
 migrate:
     uv run alembic upgrade head
 

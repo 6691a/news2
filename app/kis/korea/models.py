@@ -1,37 +1,148 @@
-"""국내주식 실시간 tick 저장 테이블 (docs/README §4.2 tick 스키마).
+"""국내주식 실시간 체결과 호가 SQLAlchemy 모델."""
 
-여기 구현할 것 — `app.core.database.Base`를 상속하는 ORM 클래스 2개
-(SQLAlchemy 2.0 `Mapped[...]` / `mapped_column` 스타일):
+from datetime import datetime
+from decimal import Decimal
 
-1. `KoreaTrade` → 테이블 `korea_trades`
-   - id: BIGSERIAL PK (자연키 없음 — 같은 초에 다건 체결 가능)
-   - stock_code: TEXT NOT NULL ('005930')
-   - ts: TIMESTAMPTZ NOT NULL — DTO의 business_date + trade_time을 KST aware로 결합
-   - price: NUMERIC NOT NULL (current_price)
-   - volume: BIGINT NOT NULL (trade_volume, 직전 체결 수량)
-   - cumulative_volume: BIGINT NOT NULL
-   - trade_classification_code: TEXT NOT NULL (매수/매도 구분)
-   - trade_strength: NUMERIC NULL (체결강도)
-   - received_at: TIMESTAMPTZ NOT NULL DEFAULT now()
-   - 인덱스: (stock_code, ts)
-   ※ 46필드 전량 컬럼화는 과잉 — 대부분 파생/누적 통계라 OHLCV 집계에 위 subset이면 충분.
+from sqlalchemy import BigInteger, Index, JSON, Numeric, Text, func
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column
 
-2. `KoreaOrderbook` → 테이블 `korea_orderbooks`
-   - id, stock_code, ts, received_at: 위와 동일
-     ※ ts 함정: 호가 DTO엔 business_time(시각)만 있고 날짜가 없다.
-       received_at의 KST 날짜와 결합해 만든다 (변환은 repository의 순수 함수에서).
-   - levels: JSONB NOT NULL — KISKoreaOrderbookLevel 10개를 그대로 직렬화한 리스트
-     [{ask_price, bid_price, ask_quantity, bid_quantity} x10]
-     타입은 `JSON().with_variant(JSONB(), "postgresql")` 권장 → 테스트에서 sqlite 대체 가능.
-     ※ 정규화(레벨 자식 테이블) 대신 JSONB인 이유: 소비 패턴이 항상 스냅샷 전체 복원이라
-       join 이득이 없고, 스냅샷당 insert가 11행 → 1행으로 준다.
-   - total_ask_quantity, total_bid_quantity: BIGINT NOT NULL
-   - 인덱스: (stock_code, ts)
+from app.core.models import EntityModel, UTCDateTime, utc_now
 
-공통 설계 노트:
-- instruments FK는 v1에서 생략, stock_code 직저장 (instruments 테이블 미구현 + 종목 2개).
-  instruments 정착 후 FK 전환.
-- Decimal 컬럼은 Numeric, JSONB의 Decimal 값은 직렬화 시 str/float 변환 필요에 유의.
-"""
 
-# TODO(사용자): 위 명세대로 KoreaTrade, KoreaOrderbook ORM 클래스를 구현한다.
+JSON_DOCUMENT = JSON().with_variant(JSONB(), "postgresql")
+
+
+class KoreaTrade(EntityModel):
+    """국내주식 실시간 체결 tick을 저장한다."""
+
+    __tablename__ = "korea_trades"
+    __table_args__ = (
+        Index("ix_korea_trades_stock_code_event_ts", "stock_code", "event_ts"),
+        {"comment": "KIS 국내주식 실시간 체결 tick"},
+    )
+
+    stock_code: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        comment="KIS 유가증권 단축 종목코드",
+    )
+    event_ts: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        nullable=False,
+        comment="영업일자와 체결시각을 결합한 UTC 체결 시각",
+    )
+    price: Mapped[Decimal] = mapped_column(
+        Numeric(28, 8),
+        nullable=False,
+        comment="주식 현재가 기준 체결 가격",
+    )
+    volume: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        comment="직전 체결 수량",
+    )
+    cumulative_volume: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        comment="영업일 누적 거래량",
+    )
+    cumulative_amount: Mapped[Decimal] = mapped_column(
+        Numeric(28, 8),
+        nullable=False,
+        comment="영업일 누적 거래대금",
+    )
+    trade_strength: Mapped[Decimal | None] = mapped_column(
+        Numeric(20, 8),
+        nullable=True,
+        comment="매수와 매도 체결량을 이용한 체결강도",
+    )
+    best_bid_price: Mapped[Decimal] = mapped_column(
+        Numeric(28, 8),
+        nullable=False,
+        comment="체결 수신 시점의 최우선 매수호가",
+    )
+    best_ask_price: Mapped[Decimal] = mapped_column(
+        Numeric(28, 8),
+        nullable=False,
+        comment="체결 수신 시점의 최우선 매도호가",
+    )
+    trade_classification_code: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        comment="KIS 체결 구분 코드",
+    )
+    details: Mapped[dict[str, object]] = mapped_column(
+        JSON_DOCUMENT,
+        nullable=False,
+        comment="등락률과 장중 통계 등 비핵심 체결 DTO 필드",
+    )
+    received_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+        comment="애플리케이션이 체결 tick을 수신한 UTC 시각",
+    )
+
+
+class KoreaOrderbook(EntityModel):
+    """국내주식 실시간 10단계 호가 스냅샷을 저장한다."""
+
+    __tablename__ = "korea_orderbooks"
+    __table_args__ = (
+        Index(
+            "ix_korea_orderbooks_stock_code_event_ts",
+            "stock_code",
+            "event_ts",
+        ),
+        {"comment": "KIS 국내주식 실시간 10단계 호가 스냅샷"},
+    )
+
+    stock_code: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        comment="KIS 유가증권 단축 종목코드",
+    )
+    event_ts: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        nullable=False,
+        comment="수신일자와 영업시각을 결합한 UTC 호가 시각",
+    )
+    best_bid_price: Mapped[Decimal] = mapped_column(
+        Numeric(28, 8),
+        nullable=False,
+        comment="1단계 최우선 매수호가",
+    )
+    best_ask_price: Mapped[Decimal] = mapped_column(
+        Numeric(28, 8),
+        nullable=False,
+        comment="1단계 최우선 매도호가",
+    )
+    total_bid_quantity: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        comment="전체 매수호가 잔량",
+    )
+    total_ask_quantity: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        comment="전체 매도호가 잔량",
+    )
+    levels: Mapped[list[dict[str, object]]] = mapped_column(
+        JSON_DOCUMENT,
+        nullable=False,
+        comment="가격과 잔량을 포함한 1단계부터 10단계까지의 호가 목록",
+    )
+    details: Mapped[dict[str, object]] = mapped_column(
+        JSON_DOCUMENT,
+        nullable=False,
+        comment="예상체결과 시간외 잔량 등 비핵심 호가 DTO 필드",
+    )
+    received_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+        comment="애플리케이션이 호가 스냅샷을 수신한 UTC 시각",
+    )
