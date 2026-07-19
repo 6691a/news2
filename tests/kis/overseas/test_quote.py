@@ -8,7 +8,6 @@ from app.core.config import Settings
 from app.kis.overseas.quote import KISOverseasWebSocketQuote
 from app.kis.overseas.schemas import (
     KISOverseasMarket,
-    KISOverseasStockCode,
     KISOverseasSubscription,
     KISOverseasTrade,
     KISOverseasTrId,
@@ -47,7 +46,7 @@ def make_subscription(tr_id: KISOverseasTrId) -> KISOverseasSubscription:
     """애플 NASDAQ 테스트 구독을 만든다."""
 
     return KISOverseasSubscription(
-        code=KISOverseasStockCode.APPLE,
+        code="AAPL",
         market=KISOverseasMarket.NASDAQ,
         tr_id=tr_id,
     )

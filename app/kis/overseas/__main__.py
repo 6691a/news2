@@ -17,7 +17,6 @@ from app.kis.overseas.quote import KISOverseasWebSocketQuote
 from app.kis.overseas.repository import KISOverseasTickRepository
 from app.kis.overseas.schemas import (
     KISOverseasMarket,
-    KISOverseasStockCode,
     KISOverseasSubscription,
     KISOverseasTrId,
 )
@@ -65,7 +64,7 @@ async def main(
             ):
                 await quote.subscribe(
                     KISOverseasSubscription(
-                        code=KISOverseasStockCode(instrument.ticker),
+                        code=instrument.ticker,
                         market=kis_market,
                         tr_id=tr_id,
                     )

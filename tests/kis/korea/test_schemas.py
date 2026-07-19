@@ -7,7 +7,6 @@ import app.kis.korea as korea_package
 from app.kis.korea.schemas import (
     KISKoreaOrderbook,
     KISKoreaOrderbookLevel,
-    KISKoreaStockCode,
     KISKoreaSubscription,
     KISKoreaTrade,
     KISKoreaTrId,
@@ -30,7 +29,7 @@ def _body_fields(frame: str) -> list[str]:
 
 def test_korea_subscription_converts_to_websocket_subscription() -> None:
     subscription = KISKoreaSubscription(
-        code=KISKoreaStockCode.SAMSUNG_ELECTRONICS,
+        code="005930",
         tr_id=KISKoreaTrId.STOCK_TRADE_KRX,
     )
 
@@ -40,9 +39,18 @@ def test_korea_subscription_converts_to_websocket_subscription() -> None:
     )
 
 
+def test_korea_subscription_accepts_ticker_not_declared_in_code() -> None:
+    subscription = KISKoreaSubscription(
+        code="035420",
+        tr_id=KISKoreaTrId.STOCK_TRADE_KRX,
+    )
+
+    assert subscription.to_websocket_subscription().tr_key == "035420"
+
+
 def test_korea_subscription_is_hashable() -> None:
     subscription = KISKoreaSubscription(
-        code=KISKoreaStockCode.SK_HYNIX,
+        code="000660",
         tr_id=KISKoreaTrId.STOCK_ORDERBOOK_UNIFIED,
     )
 

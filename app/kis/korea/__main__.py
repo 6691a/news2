@@ -16,7 +16,6 @@ from app.instruments.repository import InstrumentRepository
 from app.kis.korea.quote import KISKoreaWebSocketQuote
 from app.kis.korea.repository import KISKoreaTickRepository
 from app.kis.korea.schemas import (
-    KISKoreaStockCode,
     KISKoreaSubscription,
     KISKoreaTrId,
 )
@@ -58,7 +57,7 @@ async def main(
             ):
                 await quote.subscribe(
                     KISKoreaSubscription(
-                        code=KISKoreaStockCode(instrument.ticker),
+                        code=instrument.ticker,
                         tr_id=tr_id,
                     )
                 )

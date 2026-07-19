@@ -7,7 +7,6 @@ import pytest
 from app.core.config import Settings
 from app.kis.korea.quote import KISKoreaWebSocketQuote
 from app.kis.korea.schemas import (
-    KISKoreaStockCode,
     KISKoreaSubscription,
     KISKoreaTrade,
     KISKoreaTrId,
@@ -46,7 +45,7 @@ def make_quote() -> KISKoreaWebSocketQuote:
 async def test_korea_subscribe_stores_websocket_subscription() -> None:
     quote = make_quote()
     subscription = KISKoreaSubscription(
-        code=KISKoreaStockCode.SAMSUNG_ELECTRONICS,
+        code="005930",
         tr_id=KISKoreaTrId.STOCK_TRADE_KRX,
     )
 
@@ -59,7 +58,7 @@ async def test_korea_subscribe_stores_websocket_subscription() -> None:
 async def test_korea_unsubscribe_removes_websocket_subscription() -> None:
     quote = make_quote()
     subscription = KISKoreaSubscription(
-        code=KISKoreaStockCode.SK_HYNIX,
+        code="000660",
         tr_id=KISKoreaTrId.STOCK_TRADE_UNIFIED,
     )
     await quote.subscribe(subscription)
@@ -74,13 +73,13 @@ async def test_trade_and_orderbook_for_same_stock_are_distinct() -> None:
     quote = make_quote()
     await quote.subscribe(
         KISKoreaSubscription(
-            code=KISKoreaStockCode.SAMSUNG_ELECTRONICS,
+            code="005930",
             tr_id=KISKoreaTrId.STOCK_TRADE_KRX,
         )
     )
     await quote.subscribe(
         KISKoreaSubscription(
-            code=KISKoreaStockCode.SAMSUNG_ELECTRONICS,
+            code="005930",
             tr_id=KISKoreaTrId.STOCK_ORDERBOOK_KRX,
         )
     )

@@ -10,7 +10,6 @@ from app.instruments.models import Instrument, Market
 from app.kis.korea.__main__ import main
 from app.kis.korea.schemas import (
     KISKoreaOrderbook,
-    KISKoreaStockCode,
     KISKoreaSubscription,
     KISKoreaTrade,
     KISKoreaTrId,
@@ -94,10 +93,10 @@ async def test_main_continues_after_tick_save_failure_and_disposes_database() ->
 
     assert [event for event, _ in repository.calls] == events
     assert {(subscription.code, subscription.tr_id) for subscription in subscriptions} == {
-        (KISKoreaStockCode.SAMSUNG_ELECTRONICS, KISKoreaTrId.STOCK_TRADE_KRX),
-        (KISKoreaStockCode.SAMSUNG_ELECTRONICS, KISKoreaTrId.STOCK_ORDERBOOK_KRX),
-        (KISKoreaStockCode.SK_HYNIX, KISKoreaTrId.STOCK_TRADE_KRX),
-        (KISKoreaStockCode.SK_HYNIX, KISKoreaTrId.STOCK_ORDERBOOK_KRX),
+        ("005930", KISKoreaTrId.STOCK_TRADE_KRX),
+        ("005930", KISKoreaTrId.STOCK_ORDERBOOK_KRX),
+        ("000660", KISKoreaTrId.STOCK_TRADE_KRX),
+        ("000660", KISKoreaTrId.STOCK_ORDERBOOK_KRX),
     }
     assert all(received_at.utcoffset() is not None for _, received_at in repository.calls)
     assert database.disposed is True

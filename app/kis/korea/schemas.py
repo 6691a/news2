@@ -9,11 +9,6 @@ from app.kis.schemas.parsing import none_if_empty, parse_kis_date, parse_kis_tim
 from app.kis.schemas.websocket import KISWebSocketSubscription
 
 
-class KISKoreaStockCode(StrEnum):
-    SAMSUNG_ELECTRONICS = "005930"
-    SK_HYNIX = "000660"
-
-
 class KISKoreaTrId(StrEnum):
     STOCK_TRADE_KRX = "H0STCNT0"  # KRX(한국거래소) 실시간 체결가
     STOCK_TRADE_NXT = "H0NXCNT0"  # NXT(넥스트레이드) 실시간 체결가
@@ -27,7 +22,7 @@ class KISKoreaTrId(StrEnum):
 class KISKoreaSubscription(KISBaseModel):
     model_config = ConfigDict(frozen=True, serialize_by_alias=True)
 
-    code: KISKoreaStockCode
+    code: str
     tr_id: KISKoreaTrId
 
     def to_websocket_subscription(self) -> KISWebSocketSubscription:

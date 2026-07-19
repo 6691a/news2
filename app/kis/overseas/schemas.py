@@ -9,16 +9,6 @@ from app.kis.schemas.parsing import parse_kis_date, parse_kis_time
 from app.kis.schemas.websocket import KISWebSocketSubscription
 
 
-class KISOverseasStockCode(StrEnum):
-    APPLE = "AAPL"
-    ALPHABET = "GOOGL"
-    MICROSOFT = "MSFT"
-    META = "META"
-    NVIDIA = "NVDA"
-    QQQ = "QQQ"
-    SP500 = "SPY"
-
-
 class KISOverseasMarket(StrEnum):
     NASDAQ = "NAS"
     NYSE = "NYS"
@@ -33,7 +23,7 @@ class KISOverseasTrId(StrEnum):
 class KISOverseasSubscription(KISBaseModel):
     model_config = ConfigDict(frozen=True, serialize_by_alias=True)
 
-    code: KISOverseasStockCode
+    code: str
     market: KISOverseasMarket
     tr_id: KISOverseasTrId
 

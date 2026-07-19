@@ -8,7 +8,6 @@ from app.kis.overseas.schemas import (
     KISOverseasMarket,
     KISOverseasOrderbook,
     KISOverseasOrderbookLevel,
-    KISOverseasStockCode,
     KISOverseasSubscription,
     KISOverseasTrade,
     KISOverseasTrId,
@@ -30,16 +29,6 @@ def _body_fields(frame: str) -> list[str]:
     return frame.split("|", 3)[3].split("^")
 
 
-def test_overseas_stock_codes_are_preserved() -> None:
-    assert KISOverseasStockCode.APPLE == "AAPL"
-    assert KISOverseasStockCode.ALPHABET == "GOOGL"
-    assert KISOverseasStockCode.MICROSOFT == "MSFT"
-    assert KISOverseasStockCode.META == "META"
-    assert KISOverseasStockCode.NVIDIA == "NVDA"
-    assert KISOverseasStockCode.QQQ == "QQQ"
-    assert KISOverseasStockCode.SP500 == "SPY"
-
-
 def test_overseas_tr_ids_are_limited_to_us_quotes() -> None:
     assert KISOverseasTrId.TRADE == "HDFSCNT0"
     assert KISOverseasTrId.ORDERBOOK == "HDFSASP0"
@@ -59,7 +48,7 @@ def test_supported_us_markets_use_kis_codes() -> None:
 
 def test_nasdaq_trade_subscription_builds_kis_tr_key() -> None:
     subscription = KISOverseasSubscription(
-        code=KISOverseasStockCode.APPLE,
+        code="AAPL",
         market=KISOverseasMarket.NASDAQ,
         tr_id=KISOverseasTrId.TRADE,
     )
@@ -70,9 +59,19 @@ def test_nasdaq_trade_subscription_builds_kis_tr_key() -> None:
     )
 
 
+def test_overseas_subscription_accepts_ticker_not_declared_in_code() -> None:
+    subscription = KISOverseasSubscription(
+        code="AMD",
+        market=KISOverseasMarket.NASDAQ,
+        tr_id=KISOverseasTrId.TRADE,
+    )
+
+    assert subscription.to_websocket_subscription().tr_key == "DNASAMD"
+
+
 def test_amex_orderbook_subscription_builds_kis_tr_key() -> None:
     subscription = KISOverseasSubscription(
-        code=KISOverseasStockCode.SP500,
+        code="SPY",
         market=KISOverseasMarket.AMEX,
         tr_id=KISOverseasTrId.ORDERBOOK,
     )
@@ -85,7 +84,7 @@ def test_amex_orderbook_subscription_builds_kis_tr_key() -> None:
 
 def test_overseas_subscription_is_hashable() -> None:
     subscription = KISOverseasSubscription(
-        code=KISOverseasStockCode.NVIDIA,
+        code="NVDA",
         market=KISOverseasMarket.NASDAQ,
         tr_id=KISOverseasTrId.TRADE,
     )

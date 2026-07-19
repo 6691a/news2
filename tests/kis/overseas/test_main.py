@@ -11,7 +11,6 @@ from app.kis.overseas.__main__ import main
 from app.kis.overseas.schemas import (
     KISOverseasMarket,
     KISOverseasOrderbook,
-    KISOverseasStockCode,
     KISOverseasSubscription,
     KISOverseasTrade,
     KISOverseasTrId,
@@ -95,10 +94,10 @@ async def test_main_continues_after_tick_save_failure_and_disposes_database() ->
 
     assert [event for event, _ in repository.calls] == events
     assert {(subscription.code, subscription.market, subscription.tr_id) for subscription in subscriptions} == {
-        (KISOverseasStockCode.ALPHABET, KISOverseasMarket.NASDAQ, KISOverseasTrId.TRADE),
-        (KISOverseasStockCode.ALPHABET, KISOverseasMarket.NASDAQ, KISOverseasTrId.ORDERBOOK),
-        (KISOverseasStockCode.SP500, KISOverseasMarket.AMEX, KISOverseasTrId.TRADE),
-        (KISOverseasStockCode.SP500, KISOverseasMarket.AMEX, KISOverseasTrId.ORDERBOOK),
+        ("GOOGL", KISOverseasMarket.NASDAQ, KISOverseasTrId.TRADE),
+        ("GOOGL", KISOverseasMarket.NASDAQ, KISOverseasTrId.ORDERBOOK),
+        ("SPY", KISOverseasMarket.AMEX, KISOverseasTrId.TRADE),
+        ("SPY", KISOverseasMarket.AMEX, KISOverseasTrId.ORDERBOOK),
     }
     assert all(received_at.utcoffset() is not None for _, received_at in repository.calls)
     assert database.disposed is True
