@@ -4,6 +4,7 @@ from app.core.config import settings as app_settings
 from app.core.database import Database
 from app.instruments.repository import InstrumentRepository
 from app.kis.auth import KISAuth
+from app.kis.korea.investor.service import KISKoreaInvestorFlowService
 from app.kis.korea.quote import KISKoreaWebSocketQuote
 from app.kis.korea.repository import KISKoreaTickRepository
 from app.kis.overseas.quote import KISOverseasWebSocketQuote
@@ -28,6 +29,11 @@ class Container(containers.DeclarativeContainer):
     kis_auth = providers.Factory(
         KISAuth,
         settings=settings,
+    )
+    korea_investor_flow_service = providers.Factory(
+        KISKoreaInvestorFlowService,
+        settings=settings,
+        auth=kis_auth,
     )
     websocket_token = providers.Coroutine(
         provide_websocket_token,

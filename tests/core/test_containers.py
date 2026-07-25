@@ -29,6 +29,18 @@ def test_container_provides_kis_tick_repositories() -> None:
     assert isinstance(overseas_repository, KISOverseasTickRepository)
 
 
+def test_container_provides_korea_investor_flow_service() -> None:
+    from app.kis.korea.investor.service import KISKoreaInvestorFlowService
+
+    container = Container()
+
+    service = container.korea_investor_flow_service()
+
+    assert isinstance(service, KISKoreaInvestorFlowService)
+    assert service.settings is container.settings()
+    assert isinstance(service.auth, KISAuth)
+
+
 @pytest.mark.asyncio
 async def test_container_provides_kis_auth_and_websocket_quotes() -> None:
     container = Container()

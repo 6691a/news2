@@ -10,6 +10,7 @@ dependencies = [
     "dependency-injector>=4.49.1",
     "fastapi[standard-no-fastapi-cloud-cli]>=0.139.0",
     "pydantic-settings>=2.14.2",
+    "scrapling>=0.4.11",
     "sqlalchemy[asyncio]>=2.0.51",
     "structlog>=26.1.0",
     "websockets>=16.0,<17.0",
