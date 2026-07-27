@@ -1,0 +1,4 @@
+interface:
+  display_name: "Implement"
+  short_description: "승인된 설계 문서만 그대로 구현하는 격리 워크플로"
+  default_prompt: "Use $implement with the plan slug to implement only the approved design."

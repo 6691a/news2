@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     )
 
     database_url: str
+    # Celery broker. 호스트 실행은 .env, 컨테이너는 .env.docker가 채운다.
+    redis_url: str
     log_format: LogFormat = LogFormat.CONSOLE
     log_level: LogLevel = LogLevel.INFO
 

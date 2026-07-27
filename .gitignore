@@ -18,6 +18,8 @@ ENV/
 .env
 .env.*
 !.env.example
+# 컨테이너 오버라이드는 비밀값이 없어 커밋한다.
+!.env.docker
 *.pem
 *.key
 

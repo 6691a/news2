@@ -1,6 +1,7 @@
-"""KIS 국내 투자자 수급 진단 스키마."""
+"""KIS 국내 투자자 수급 수집 스키마."""
 
 from datetime import date
+from decimal import Decimal
 from enum import StrEnum
 from typing import Self
 
@@ -8,10 +9,23 @@ from pydantic import BaseModel, JsonValue, RootModel, model_validator
 
 
 class InvestorFlowPhase(StrEnum):
-    """투자자 수급 진단 시점."""
+    """투자자 수급 수집 시점."""
 
     INTRADAY = "intraday"
     FINAL = "final"
+
+
+class InvestorFlowScope(StrEnum):
+    """한 번의 수집이 다룰 조회 대상 범위.
+
+    두 TR의 갱신 주기가 달라서 같은 스케줄로 묶을 수 없다. 종목 가집계는 KIS가
+    정한 입력시간에만 갱신되고(외국인 09:30·11:20·13:20·14:30, 기관 10:00·
+    11:20·13:20·14:30), 시장 집계는 시세성이라 그보다 자주 바뀐다.
+    """
+
+    STOCK = "stock"
+    MARKET = "market"
+    ALL = "all"
 
 
 class InvestorFlowVenue(StrEnum):
@@ -20,6 +34,30 @@ class InvestorFlowVenue(StrEnum):
     KRX = "KRX"
     NXT = "NXT"
     UNSPECIFIED = "UNSPECIFIED"
+
+
+class InvestorType(StrEnum):
+    """저장용으로 정규화한 투자자 유형.
+
+    KIS 응답 필드 접두사를 사람이 읽는 이름으로 옮긴 것이다. 값이 DB에 그대로
+    들어가므로 나중에 바꾸면 마이그레이션이 필요하다.
+
+    INSTITUTION은 SECURITIES~PENSION_FUND의 합계다. 집계 쿼리에서 기관계와
+    하위 유형을 함께 더하면 이중 계산이 된다.
+    """
+
+    FOREIGN = "foreign"  # frgn_*      외국인
+    RETAIL = "retail"  # prsn_*      개인
+    INSTITUTION = "institution"  # orgn_*      기관계(하위 유형의 합)
+    SECURITIES = "securities"  # scrt_*      증권
+    TRUST = "trust"  # ivtr_*      투자신탁
+    PRIVATE_EQUITY = "private_equity"  # pe_fund_*   사모펀드
+    BANK = "bank"  # bank_*      은행
+    INSURANCE = "insurance"  # insu_*      보험
+    MERCHANT_BANK = "merchant_bank"  # mrbn_*      종금
+    PENSION_FUND = "pension_fund"  # fund_*      기금
+    OTHER_ORGANIZATION = "other_organization"  # etc_orgt_*  기타 단체
+    OTHER_CORPORATION = "other_corporation"  # etc_corp_*  기타 법인
 
 
 class InvestorFlowTrId(StrEnum):
@@ -43,9 +81,10 @@ class InvestorFlowTrId(StrEnum):
 
 
 class InvestorFlowProbeOptions(BaseModel):
-    """투자자 수급 진단 실행 옵션."""
+    """투자자 수급 수집 실행 옵션."""
 
     phase: InvestorFlowPhase
+    scope: InvestorFlowScope = InvestorFlowScope.ALL
     trade_date: date | None = None
 
     @model_validator(mode="after")
@@ -67,7 +106,7 @@ class InvestorFlowRequest(BaseModel):
     params: dict[str, str]
 
 
-# --- 응답 본문 DTO (장중 2종만; 마감 TR은 샘플 확보 후 추가) -----------------
+# --- 응답 본문 DTO ---------------------------------------------------------
 
 
 class InvestorFlowEnvelope(BaseModel):
@@ -176,11 +215,121 @@ class MarketIntradayFlowBody(InvestorFlowEnvelope):
     output: list[MarketIntradayFlowRow]
 
 
+class StockFinalFlowSummary(BaseModel):
+    """종목별 일별 투자자매매동향 현재가 요약 (TR FHPTJ04160001, output1)."""
+
+    stck_prpr: int
+    prdy_vrss: int
+    prdy_vrss_sign: str
+    prdy_ctrt: Decimal
+    acml_vol: int
+    prdy_vol: int
+    rprs_mrkt_kor_name: str
+
+
+class StockFinalFlowRow(MarketIntradayFlowRow):
+    """종목별 일별 투자자매매동향 행 (TR FHPTJ04160001, output2 원소)."""
+
+    stck_bsop_date: str
+    stck_clpr: int
+    prdy_vrss: int
+    prdy_vrss_sign: str
+    prdy_ctrt: Decimal
+    acml_vol: int
+    acml_tr_pbmn: int
+    stck_oprc: int
+    stck_hgpr: int
+    stck_lwpr: int
+    frgn_reg_ntby_qty: int
+    frgn_nreg_ntby_qty: int
+    etc_ntby_qty: int
+    frgn_reg_ntby_pbmn: int
+    frgn_nreg_ntby_pbmn: int
+    etc_ntby_tr_pbmn: int
+    frgn_reg_askp_qty: int
+    frgn_reg_bidp_qty: int
+    frgn_reg_askp_pbmn: int
+    frgn_reg_bidp_pbmn: int
+    frgn_nreg_askp_qty: int
+    frgn_nreg_bidp_qty: int
+    frgn_nreg_askp_pbmn: int
+    frgn_nreg_bidp_pbmn: int
+    etc_seln_vol: int
+    etc_shnu_vol: int
+    etc_seln_tr_pbmn: int
+    etc_shnu_tr_pbmn: int
+    bold_yn: str
+
+
+class StockFinalFlowBody(InvestorFlowEnvelope):
+    """TR FHPTJ04160001 응답 본문."""
+
+    output1: StockFinalFlowSummary
+    output2: list[StockFinalFlowRow]
+
+
+class MarketFinalFlowRow(BaseModel):
+    """시장별 일별 투자자매매동향 행 (TR FHPTJ04040000, output 원소)."""
+
+    stck_bsop_date: str  # 영업일자(YYYYMMDD)
+    bstp_nmix_prpr: Decimal  # 업종 지수 현재가
+    bstp_nmix_prdy_vrss: Decimal  # 업종 지수 전일 대비
+    prdy_vrss_sign: str  # 전일 대비 부호 코드
+    bstp_nmix_prdy_ctrt: Decimal  # 업종 지수 전일 대비율(%)
+    bstp_nmix_oprc: Decimal  # 업종 지수 시가
+    bstp_nmix_hgpr: Decimal  # 업종 지수 고가
+    bstp_nmix_lwpr: Decimal  # 업종 지수 저가
+    stck_prdy_clpr: Decimal  # 전일 종가
+    frgn_ntby_qty: int  # 외국인 순매수 수량
+    frgn_reg_ntby_qty: int  # 등록 외국인 순매수 수량
+    frgn_nreg_ntby_qty: int  # 비등록 외국인 순매수 수량
+    prsn_ntby_qty: int  # 개인 순매수 수량
+    orgn_ntby_qty: int  # 기관계 순매수 수량
+    scrt_ntby_qty: int  # 증권 순매수 수량
+    ivtr_ntby_qty: int  # 투자신탁 순매수 수량
+    pe_fund_ntby_vol: int  # 사모펀드 순매수 수량
+    bank_ntby_qty: int  # 은행 순매수 수량
+    insu_ntby_qty: int  # 보험 순매수 수량
+    mrbn_ntby_qty: int  # 종금 순매수 수량
+    fund_ntby_qty: int  # 기금 순매수 수량
+    etc_ntby_qty: int  # 기타 순매수 수량
+    etc_orgt_ntby_vol: int  # 기타 단체 순매수 수량
+    etc_corp_ntby_vol: int  # 기타 법인 순매수 수량
+    frgn_ntby_tr_pbmn: int  # 외국인 순매수 거래대금
+    frgn_reg_ntby_pbmn: int  # 등록 외국인 순매수 거래대금
+    frgn_nreg_ntby_pbmn: int  # 비등록 외국인 순매수 거래대금
+    prsn_ntby_tr_pbmn: int  # 개인 순매수 거래대금
+    orgn_ntby_tr_pbmn: int  # 기관계 순매수 거래대금
+    scrt_ntby_tr_pbmn: int  # 증권 순매수 거래대금
+    ivtr_ntby_tr_pbmn: int  # 투자신탁 순매수 거래대금
+    pe_fund_ntby_tr_pbmn: int  # 사모펀드 순매수 거래대금
+    bank_ntby_tr_pbmn: int  # 은행 순매수 거래대금
+    insu_ntby_tr_pbmn: int  # 보험 순매수 거래대금
+    mrbn_ntby_tr_pbmn: int  # 종금 순매수 거래대금
+    fund_ntby_tr_pbmn: int  # 기금 순매수 거래대금
+    etc_ntby_tr_pbmn: int  # 기타 순매수 거래대금
+    etc_orgt_ntby_tr_pbmn: int  # 기타 단체 순매수 거래대금
+    etc_corp_ntby_tr_pbmn: int  # 기타 법인 순매수 거래대금
+
+
+class MarketFinalFlowBody(InvestorFlowEnvelope):
+    """TR FHPTJ04040000 응답 본문."""
+
+    output: list[MarketFinalFlowRow]
+
+
 class InvestorFlowRawBody(RootModel[JsonValue]):
     """전용 DTO가 없거나 JSON이 아닌 KIS 응답 본문."""
 
 
-type InvestorFlowBody = StockIntradayFlowBody | MarketIntradayFlowBody | InvestorFlowEnvelope | InvestorFlowRawBody
+type InvestorFlowBody = (
+    StockIntradayFlowBody
+    | MarketIntradayFlowBody
+    | StockFinalFlowBody
+    | MarketFinalFlowBody
+    | InvestorFlowEnvelope
+    | InvestorFlowRawBody
+)
 
 
 def parse_investor_flow_body(
@@ -195,6 +344,10 @@ def parse_investor_flow_body(
                 return StockIntradayFlowBody.model_validate(body)
             if tr_id is InvestorFlowTrId.KOSPI_INTRADAY:
                 return MarketIntradayFlowBody.model_validate(body)
+            if tr_id is InvestorFlowTrId.STOCK_FINAL:
+                return StockFinalFlowBody.model_validate(body)
+            if tr_id is InvestorFlowTrId.KOSPI_FINAL:
+                return MarketFinalFlowBody.model_validate(body)
         elif {"rt_cd", "msg_cd", "msg1"} <= body.keys():
             return InvestorFlowEnvelope.model_validate(body)
     return InvestorFlowRawBody(root=body)

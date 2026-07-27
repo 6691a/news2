@@ -7,9 +7,11 @@ requires-python = ">=3.13"
 dependencies = [
     "alembic>=1.18.5",
     "asyncpg>=0.31.0",
+    "celery[redis]>=5.6.3",
     "dependency-injector>=4.49.1",
     "fastapi[standard-no-fastapi-cloud-cli]>=0.139.0",
     "pydantic-settings>=2.14.2",
+    "redis>=6.4.0",
     "scrapling>=0.4.11",
     "sqlalchemy[asyncio]>=2.0.51",
     "structlog>=26.1.0",

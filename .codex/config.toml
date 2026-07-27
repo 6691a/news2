@@ -1,0 +1,16 @@
+[mcp_servers.pgedge-postgres]
+command = "docker"
+args = [
+  "compose",
+  "-f",
+  "compose.local.yaml",
+  "run",
+  "--rm",
+  "-T",
+  "postgres-mcp",
+]
+cwd = ".."
+startup_timeout_sec = 60
+tool_timeout_sec = 60
+required = false
+default_tools_approval_mode = "prompt"

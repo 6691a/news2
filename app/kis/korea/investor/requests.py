@@ -5,22 +5,25 @@ from app.kis.korea.investor.schemas import (
     InvestorFlowPhase,
     InvestorFlowProbeOptions,
     InvestorFlowRequest,
+    InvestorFlowScope,
     InvestorFlowTrId,
     InvestorFlowVenue,
 )
 
 
 def build_requests(options: InvestorFlowProbeOptions) -> tuple[InvestorFlowRequest, ...]:
-    """실행 단계에 맞는 공식 KIS 요청 명세를 반환한다.
+    """실행 단계와 대상 범위에 맞는 공식 KIS 요청 명세를 반환한다.
 
     Args:
-        options: 장중 또는 장 마감 진단 옵션.
+        options: 장중 또는 장 마감 수집 옵션. scope로 종목·시장을 가려낸다.
 
     Returns:
         호출 순서대로 정렬된 KIS REST 요청 명세.
     """
 
-    stocks = (("005930", "삼성전자"), ("000660", "SK하이닉스"))
+    wants_stock = options.scope is not InvestorFlowScope.MARKET
+    wants_market = options.scope is not InvestorFlowScope.STOCK
+    stocks = (("005930", "삼성전자"), ("000660", "SK하이닉스")) if wants_stock else ()
     if options.phase is InvestorFlowPhase.INTRADAY:
         stock_requests = tuple(
             InvestorFlowRequest(
@@ -32,7 +35,7 @@ def build_requests(options: InvestorFlowProbeOptions) -> tuple[InvestorFlowReque
             )
             for stock_code, stock_name in stocks
         )
-        return stock_requests + (
+        market_requests = (
             InvestorFlowRequest(
                 target="KOSPI",
                 target_name="코스피",
@@ -44,6 +47,7 @@ def build_requests(options: InvestorFlowProbeOptions) -> tuple[InvestorFlowReque
                 },
             ),
         )
+        return stock_requests + (market_requests if wants_market else ())
 
     trade_date = options.trade_date
     assert trade_date is not None
@@ -69,7 +73,7 @@ def build_requests(options: InvestorFlowProbeOptions) -> tuple[InvestorFlowReque
         for stock_code, stock_name in stocks
         for venue, market_code in market_codes
     )
-    return stock_requests + (
+    market_requests = (
         InvestorFlowRequest(
             target="KOSPI",
             target_name="코스피",
@@ -85,6 +89,7 @@ def build_requests(options: InvestorFlowProbeOptions) -> tuple[InvestorFlowReque
             },
         ),
     )
+    return stock_requests + (market_requests if wants_market else ())
 
 
 def build_headers(

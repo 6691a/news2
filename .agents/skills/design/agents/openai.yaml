@@ -1,0 +1,4 @@
+interface:
+  display_name: "Design"
+  short_description: "구현 전에 독립된 설계 문서만 작성하는 워크플로"
+  default_prompt: "Use $design to design this task and create one plan document without implementing it."

@@ -1,4 +1,4 @@
-"""KIS 국내 투자자 수급 진단 서비스."""
+"""KIS 국내 투자자 수급 수집 서비스."""
 
 from typing import Protocol, cast
 
@@ -20,10 +20,10 @@ class _KISRestTokenProvider(Protocol):
 
 
 class KISKoreaInvestorFlowService:
-    """실전 KIS 국내 투자자 수급 응답 진단 서비스."""
+    """실전 KIS 국내 투자자 수급 응답 수집 서비스."""
 
     def __init__(self, settings: Settings, auth: _KISRestTokenProvider) -> None:
-        """진단 서비스 의존성을 초기화한다.
+        """수집 서비스 의존성을 초기화한다.
 
         Args:
             settings: 실전 KIS 도메인과 인증 설정.
@@ -41,7 +41,7 @@ class KISKoreaInvestorFlowService:
         """KIS 투자자 수급 API를 순차 호출해 원본 응답을 수집한다.
 
         Args:
-            options: 장중 또는 장 마감 진단 옵션.
+            options: 장중 또는 장 마감 수집 옵션.
             client: 요청에 사용할 비동기 HTTP 클라이언트.
 
         Returns:
@@ -49,11 +49,11 @@ class KISKoreaInvestorFlowService:
 
         Raises:
             ValueError: 모의투자 설정으로 실행한 경우.
-            httpx.HTTPError: 토큰 발급 또는 네트워크 전송에 실패한 경우.
+            httpx.HTTPError: 토큰 발급·네트워크 전송에 실패하거나 응답이 4xx·5xx인 경우.
         """
 
         if self.settings.kis_virtual:
-            raise ValueError("실전키 진단은 KIS_VIRTUAL=false 설정이 필요합니다.")
+            raise ValueError("실전키 수집은 KIS_VIRTUAL=false 설정이 필요합니다.")
 
         token = await self.auth.get_auth_token()
         results: list[InvestorFlowResult] = []
@@ -63,6 +63,12 @@ class KISKoreaInvestorFlowService:
                 headers=build_headers(self.settings, token.access_token, request),
                 params=request.params,
             )
+            # 5xx·502는 KIS나 게이트웨이의 일시 장애다. 여기서 예외로 올려야
+            # Celery가 재시도한다. 그냥 담아두면 rt_cd 검사도 통과하지 못한 채
+            # 0행 저장으로 끝나고, 그 시각 데이터는 영영 비어 있는다.
+            # rt_cd != "0"(HTTP 200) 업무 오류는 재시도해도 같은 답이라 그대로 담는다.
+            response.raise_for_status()
+
             try:
                 body = cast(JsonValue, response.json())
             except ValueError:

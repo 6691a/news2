@@ -1,9 +1,11 @@
 from dependency_injector import containers, providers
+from redis.asyncio import Redis
 
 from app.core.config import settings as app_settings
 from app.core.database import Database
 from app.instruments.repository import InstrumentRepository
 from app.kis.auth import KISAuth
+from app.kis.korea.investor.repository import KISInvestorFlowRepository
 from app.kis.korea.investor.service import KISKoreaInvestorFlowService
 from app.kis.korea.quote import KISKoreaWebSocketQuote
 from app.kis.korea.repository import KISKoreaTickRepository
@@ -26,9 +28,16 @@ class Container(containers.DeclarativeContainer):
         Database,
         database_url=settings.provided.database_url,
     )
+    # 연결 풀을 재사용해야 하므로 Singleton이다.
+    redis_client = providers.Singleton(
+        Redis.from_url,
+        settings.provided.redis_url,
+        decode_responses=True,
+    )
     kis_auth = providers.Factory(
         KISAuth,
         settings=settings,
+        redis=redis_client,
     )
     korea_investor_flow_service = providers.Factory(
         KISKoreaInvestorFlowService,
@@ -59,6 +68,10 @@ class Container(containers.DeclarativeContainer):
     )
     instrument_repository = providers.Factory(
         InstrumentRepository,
+        session_factory=database.provided.session_factory,
+    )
+    korea_investor_flow_repository = providers.Factory(
+        KISInvestorFlowRepository,
         session_factory=database.provided.session_factory,
     )
 

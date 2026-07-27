@@ -120,7 +120,7 @@ async def test_collect_results_preserves_kis_error_body() -> None:
 @pytest.mark.asyncio
 async def test_collect_results_preserves_non_json_response() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(502, request=request, text="upstream unavailable")
+        return httpx.Response(200, request=request, text="not json at all")
 
     service = KISKoreaInvestorFlowService(settings=settings(), auth=FakeAuth())
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -129,10 +129,26 @@ async def test_collect_results_preserves_non_json_response() -> None:
             client=client,
         )
 
-    assert results[0].http_status == 502
+    assert results[0].http_status == 200
     assert isinstance(results[0].body, schemas.InvestorFlowRawBody)
-    assert results[0].body.root == "upstream unavailable"
-    assert results[0].model_dump(mode="json")["body"] == "upstream unavailable"
+    assert results[0].body.root == "not json at all"
+    assert results[0].model_dump(mode="json")["body"] == "not json at all"
+
+
+@pytest.mark.asyncio
+async def test_collect_results_raises_on_upstream_error_status() -> None:
+    """5xx를 빈 결과로 삼키면 Celery 재시도가 돌지 않아 그 슬롯이 영구 누락된다."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(502, request=request, text="upstream unavailable")
+
+    service = KISKoreaInvestorFlowService(settings=settings(), auth=FakeAuth())
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            await service.collect_results(
+                options=InvestorFlowProbeOptions(phase=InvestorFlowPhase.INTRADAY),
+                client=client,
+            )
 
 
 @pytest.mark.asyncio

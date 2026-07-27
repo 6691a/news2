@@ -1,6 +1,6 @@
 # 주식 분석 LLM 시스템 설계 문서
 
-> **버전**: v0.9 · **작성일**: 2026-07-09 · **갱신**: 2026-07-17 (KIS 실시간 tick DB 저장 연결)
+> **버전**: v0.9 · **작성일**: 2026-07-09 · **갱신**: 2026-07-27 (국내 투자자 수급 수집·저장 파이프라인 연결)
 > **주의**: 이 문서는 첫 설계 초안 기반이다. 코드와 다르면 코드가 소스 오브 트루스 — 구현하며 계속 갱신한다.
 > **목적**: 확정된 추적 종목 9개(한국 2 + 미국 7, §1.4)에 대한 뉴스·시세 기반 LLM 분석/시그널 생성 시스템의 전체 설계
 > **성격**: 개인 분석 도구 및 AI/LLM 엔지니어링 포트폴리오 프로젝트 (자동매매 아님)
@@ -177,7 +177,7 @@ flowchart TD
 | 공시 | 30분~1시간 | |
 | 지수/선물/환율 | 15분 | USD/JPY, JPY/KRW 포함 |
 | 채권 금리 | 1시간 ~ 일 1회 | 금리는 변동 빈도 낮음 — 일별 스냅샷으로 충분 |
-| 수급 동향 (현물/선물) | 장중 잠정치 30분~1시간, 마감 후 확정치 1회 | 장중 데이터는 **잠정치**(provisional) 플래그로 구분 저장, 확정치로 덮어쓰기 |
+| 수급 동향 (현물/선물) | 장중 잠정치 30분~1시간, 마감 후 확정치 1회 | 장중 데이터는 **잠정치**(provisional) 플래그로 구분 저장. 덮어쓰지 않고 `snapshot_ts`별로 이력 축적 |
 
 ### 3.3 스케줄링
 
@@ -189,6 +189,9 @@ flowchart TD
   재시작하게 한다. `ALREADY IN SUBSCRIBE`는 멱등적 성공으로 처리한다.
 - 국내·해외 실시간 DTO는 수신 직후 SQLAlchemy repository가 건별 트랜잭션으로 저장한다.
   DB 저장 실패는 해당 tick만 폐기하고 구조화 로그를 남긴 뒤 스트림 수신을 계속한다.
+- KIS REST 접근토큰은 발급 제한(1분 1회)이 있으므로 Redis에 캐시해 모든 프로세스가
+  공유한다. 만료는 `expires_in`에서 여유분 10분을 뺀 Redis TTL이 강제하며, 캐시가
+  살아 있는 동안에는 `/oauth2/tokenP`를 호출하지 않는다.
 
 ### 3.4 로깅
 
@@ -324,17 +327,29 @@ CREATE INDEX ON overseas_orderbooks (symbol, event_ts);
 -- 수급 동향 (한국 시장: 현물 종목별 + 선물 시장 단위)
 CREATE TABLE investor_flows (
   id             BIGSERIAL PRIMARY KEY,
-  instrument_id  INT REFERENCES instruments(id),  -- 종목별 수급. 선물/시장 단위는
-                                                  -- 'KOSPI200_FUT' 등 macro instrument로 등록
-  trade_date     DATE NOT NULL,
+  instrument_id  INT NOT NULL REFERENCES instruments(id),  -- 종목별 수급. 시장/선물 단위는
+                                                  -- 'KOSPI', 'KOSPI200_FUT' 등 macro instrument로 등록
+  trade_date     DATE NOT NULL,        -- 한국 날짜. 장중 응답에는 날짜가 없어 snapshot_ts의 KST 날짜 사용
+  venue          TEXT NOT NULL,        -- 'KRX' | 'NXT' | 'UNSPECIFIED'
+                                       -- 마감 종목 TR은 KRX/NXT를 따로 호출한다
   investor_type  TEXT NOT NULL,        -- 'foreign', 'institution', 'retail',
-                                       -- 'pension', 'trust', ...
-  net_buy_value  BIGINT,               -- 순매수 금액 (원)
+                                       -- 'securities', 'trust', 'pension_fund', ...
+                                       -- 'institution'은 하위 유형의 합계 — 이중 계산 주의
+  net_buy_value  BIGINT,               -- 순매수 금액. **백만원 단위(*_ntby_tr_pbmn) 원본 그대로 저장**
+                                       -- 억원 환산은 조회하는 쪽에서 /100. 저장 시 곱하지 않는다.
+                                       -- 종목 장중 TR에는 금액이 없어 NULL
   net_buy_volume BIGINT,               -- 순매수 수량 (계약수/주식수)
-  is_provisional BOOLEAN DEFAULT true, -- 장중 잠정치 여부 (확정치로 갱신)
-  snapshot_ts    TIMESTAMPTZ DEFAULT now(),
-  UNIQUE (instrument_id, trade_date, investor_type, is_provisional)
+  time_bucket    TEXT NOT NULL DEFAULT '',  -- 종목 장중 TR의 집계 시간대(bsop_hour_gb '1'~'4')
+                                            -- 시간대 구분이 없으면 ''(NULL 금지: UNIQUE 무력화)
+  is_provisional BOOLEAN NOT NULL,     -- 장중 가집계(잠정치) 여부. 수집 단계에서 항상 채운다
+  snapshot_ts    TIMESTAMPTZ NOT NULL, -- 응답 수신 UTC 시각. 30분 슬롯으로 내려 재시도를 같은 눈금에 묶는다
+  details        JSONB NOT NULL,       -- 매도/매수 원본 등 순매수 외 필드
+  UNIQUE (instrument_id, trade_date, investor_type,
+          venue, time_bucket, is_provisional, snapshot_ts)
 );
+CREATE INDEX ON investor_flows (instrument_id, trade_date);
+-- 장중 잠정치를 확정치로 "덮어쓰지" 않고, snapshot_ts를 키에 포함해 이력을 그대로 축적한다
+-- (외국인이 몇 시부터 순매수로 돌았는지 같은 장중 흐름 분석을 위해).
 
 -- T3 수집 전용 일별 지표 (프로그램 매매, 공매도, 대차/신용 잔고 등)
 CREATE TABLE daily_metrics (
