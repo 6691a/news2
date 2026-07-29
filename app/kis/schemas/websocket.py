@@ -38,6 +38,22 @@ class KISWebSocketSubscription(KISBaseModel):
     tr_key: str
 
 
+class KISWebSocketPingPongHeader(KISBaseModel):
+    tr_id: str
+    datetime: str | None = None
+
+
+class KISWebSocketPingPongMessage(KISBaseModel):
+    header: KISWebSocketPingPongHeader
+    body: None = None
+
+    @property
+    def is_pingpong(self) -> bool:
+        """KIS PINGPONG 제어 메시지인지 반환한다."""
+
+        return self.header.tr_id == "PINGPONG"
+
+
 class KISWebSocketSubscriptionResponseHeader(KISBaseModel):
     tr_id: str
     tr_key: str

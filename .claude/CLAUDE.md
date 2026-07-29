@@ -42,6 +42,27 @@
   검증이 FAIL이면 설계 또는 구현 단계로 되돌아간다.
 - 워크플로 전체 설명은 `docs/plans/README.md` 참고.
 
+## 외부 API 호출 (반드시 지킬 것)
+
+- **에이전트는 실제 외부 API·WebSocket을 직접 호출하지 않는다.** KIS, Yahoo Finance,
+  FRED 등 모든 외부 엔드포인트가 대상이다. 설계·구현·검증·디버깅 어느 단계에서도 같다.
+  - 실호출은 rate limit을 소진시킨다. 실제로 Yahoo v8 chart는 IP 단위 엣지 차단
+    (`429 Edge: Too Many Requests`)이 걸려 사용자의 첫 호출까지 막혔다.
+  - KIS는 토큰 발급 횟수 제한이 있어 실호출이 운영 배치의 발급 실패로 이어진다.
+  - 실호출에 의존한 테스트는 네트워크·장 시간에 따라 결과가 흔들려 재현되지 않는다.
+- **응답 값이 다음 작업에 필요하면 거기서 멈추고 사용자에게 요청한다.**
+  응답 형식을 추측해서 지어내지 않고, 우회 경로를 찾지도 않는다.
+  요청할 때는 다음을 함께 적는다.
+  - 호출할 엔드포인트·TR ID와 파라미터(사용자가 그대로 실행할 수 있는 형태)
+  - 그 응답이 왜 필요한지, 어떤 판단에 쓰이는지
+  - 정상 응답 외에 필요한 변형(휴장일, 빈 응답, 오류 응답 등)
+- 사용자가 준 응답은 **테스트 목 데이터로 고정**한다(`tests/<패키지>/fixtures.py` 등).
+  이후 개발·테스트는 실호출이 아니라 그 목 데이터만 사용한다.
+- 테스트는 `httpx.MockTransport` 같은 수단으로 네트워크를 타지 않게 만든다.
+  실제 도메인으로 나가는 테스트를 작성하지 않는다.
+- 예외: 사용자가 이번 작업에 한해 실호출을 **명시적으로 지시한 경우**에만 호출한다.
+  사용자가 직접 노트북·CLI로 호출하는 것은 이 규칙의 대상이 아니다.
+
 ## 타입 / 모델
 - 값이 정해진 집합(예: 조회 기간, 봉 간격)은 `Literal`이 아니라 **Enum 클래스**로 정의한다.
 - 여러 파라미터를 함께 넘길 때는 개별 인자 나열 대신 **Pydantic `BaseModel`** 로 묶어 전달한다
@@ -97,6 +118,21 @@ class OHLCVQuery(BaseModel):
 - 테스트에서는 실제 전역 의존성을 교체하지 말고 Dependency Injector의 provider
   override를 사용해 DB 또는 repository를 격리한다.
 
+## Celery / 스케줄
+
+- Celery task 함수는 그 기능을 담당하는 패키지의 **`tasks.py`** 에만 둔다.
+  다른 모듈이나 `app/core/celery.py`에 task를 직접 정의하지 않는다.
+- beat 스케줄 정의는 같은 패키지의 **`beats.py`** 에 둔다. `app/core/celery.py`는
+  Celery 앱 인스턴스와 공통 설정만 갖고, 각 패키지의 `beats.py`를 모아 등록한다.
+- 함수 이름에 역할을 접두사로 붙인다.
+  - task 함수: **`task_`** 로 시작한다 (예: `task_collect_intraday`).
+  - beat 정의 함수: **`beat_`** 로 시작한다. 패키지마다 `beat_schedule()` 하나를 두고
+    그 패키지의 항목 딕셔너리를 반환한다.
+- `beats.py`는 task 모듈을 import하지 않고 task 이름 문자열만 참조한다.
+  (`app/core/celery.py` → `beats.py` → `tasks.py` 순환 import를 막는다.)
+- task 이름 문자열(`@app.task(name=...)`)은 접두사 규칙과 무관하게 기존처럼
+  `<도메인>.<동작>` 형식을 유지한다.
+
 ## 로깅
 
 - 애플리케이션 코드에서는 `app.core.logging.get_logger()`로 받은 structlog 로거만 사용한다.
@@ -106,6 +142,36 @@ class OHLCVQuery(BaseModel):
 - 이벤트 이름은 `snake_case`로 작성하고, 동적 값은 문자열 보간 대신 구조화 필드로 전달한다.
 - 모든 로그 timestamp는 UTC ISO 8601 형식으로 출력한다. 로컬은 `console`, 운영 환경은
   `json` 형식을 사용하며 `LOG_FORMAT`과 `LOG_LEVEL`은 `Settings`를 통해 주입한다.
+
+### 실패는 조용히 묻지 않는다
+
+- **외부 API 응답이 4xx·5xx면 반드시 `ERROR` 로그를 남기고 예외를 올린다.**
+  `app.core.http.raise_for_status()`를 쓴다. `response.raise_for_status()`를 직접
+  부르지 않는다 — 예외는 올라가지만 상태 코드가 구조화 필드로 남지 않아 운영에서
+  `429`·`500`을 집계하거나 알림 규칙을 걸 수 없다.
+- 실패를 삼키고 빈 결과·`None`·기본값으로 대체하지 않는다. 저장 0건과 호출 실패는
+  로그에서 구분되어야 한다. "값이 안 들어왔는데 아무 로그도 없는" 상태를 만들지 않는다.
+- 예외를 잡아 흐름을 계속할 때는(예: 개별 틱 저장 실패) 반드시 `logger.exception()`
+  또는 `logger.warning()`으로 남기고, 무엇을 건너뛰었는지 구조화 필드에 적는다.
+  `except ... : pass`는 이유를 주석으로 설명할 수 있을 때만 쓴다.
+- 로그에 **비밀값을 남기지 않는다.** URL 쿼리에 API 키가 실릴 수 있으므로
+  (FRED `api_key`) 전체 URL 대신 host와 path만 남긴다. 응답 본문은 앞부분만 남긴다.
+
+### HTTP 상태 코드 표기
+
+- 상태 코드를 코드에 적을 때는 `200`·`429` 같은 숫자 리터럴 대신
+  **`fastapi.status` 상수**를 쓴다 (`status.HTTP_200_OK`, `status.HTTP_429_TOO_MANY_REQUESTS`).
+- **테스트만이 아니라 `app/` 아래 애플리케이션 코드를 포함한 모든 코드에 적용된다.**
+  응답 생성, 상태 비교, 상수 정의, 재시도 대상 목록 어디에서든 숫자를 직접 적지 않는다.
+- 응답에서 읽어 온 값(`response.status_code`)을 그대로 담거나 로깅하는 것은 해당 없다.
+  비교·생성처럼 **코드에 숫자를 직접 적는 자리**가 대상이다.
+  주석·docstring에서 `4xx`·`5xx`처럼 범위를 설명하는 것도 해당 없다.
+
+```python
+from fastapi import status
+
+return httpx.Response(status.HTTP_502_BAD_GATEWAY, request=request)
+```
 
 ## Docstring
 - 함수를 작성할 때는 **구글 스타일 docstring**을 작성한다.

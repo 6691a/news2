@@ -3,10 +3,9 @@
 from datetime import date, datetime
 
 from sqlalchemy import BigInteger, Boolean, Date, ForeignKey, Index, Text, UniqueConstraint
-from sqlalchemy import Enum as SQLAlchemyEnum
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.core.models import EntityModel, UTCDateTime
+from app.core.models import EntityModel, UTCDateTime, enum_column
 from app.kis.korea.investor.schemas import InvestorFlowVenue, InvestorType
 from app.kis.korea.models import JSON_DOCUMENT
 
@@ -53,28 +52,12 @@ class InvestorFlow(EntityModel):
         comment="수급 기준 영업일(한국 날짜)",
     )
     venue: Mapped[InvestorFlowVenue] = mapped_column(
-        SQLAlchemyEnum(
-            InvestorFlowVenue,
-            name="investor_flow_venue",
-            native_enum=False,
-            create_constraint=True,
-            validate_strings=True,
-            # 멤버 이름이 아니라 값을 저장한다.
-            values_callable=lambda enum: [member.value for member in enum],
-        ),
+        enum_column(InvestorFlowVenue, name="investor_flow_venue"),
         nullable=False,
         comment="응답의 거래 시장 범위",
     )
     investor_type: Mapped[InvestorType] = mapped_column(
-        SQLAlchemyEnum(
-            InvestorType,
-            name="investor_flow_investor_type",
-            native_enum=False,
-            create_constraint=True,
-            validate_strings=True,
-            # 멤버 이름이 아니라 값을 저장한다.
-            values_callable=lambda enum: [member.value for member in enum],
-        ),
+        enum_column(InvestorType, name="investor_flow_investor_type"),
         nullable=False,
         comment="투자자 유형",
     )

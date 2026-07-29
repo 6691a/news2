@@ -7,10 +7,17 @@ from app.kis.korea.investor import schemas
 from app.kis.korea.investor.schemas import (
     InvestorFlowPhase,
     InvestorFlowProbeOptions,
+    InvestorFlowRequest,
     InvestorFlowTrId,
+    InvestorFlowVenue,
+    InvestorType,
+    MarketFinalFlowParams,
     MarketIntradayFlowBody,
+    MarketIntradayFlowParams,
     MarketIntradayFlowRow,
+    StockFinalFlowParams,
     StockIntradayFlowBody,
+    StockIntradayFlowParams,
     StockIntradayFlowRow,
 )
 from tests.kis.korea.investor.fixtures import (
@@ -56,9 +63,35 @@ def test_market_intraday_flow_body_parses_every_real_response_field() -> None:
 
     assert body.msg_cd == "MCA00000"
     assert set(MarketIntradayFlowRow.model_fields) == set(MARKET_INTRADAY_FLOW_RESPONSE["output"][0])
-    assert all(isinstance(value, int) for value in row.model_dump().values())
+    assert all(isinstance(getattr(row, field_name), int) for field_name in MarketIntradayFlowRow.model_fields)
     assert row.frgn_ntby_qty == -100609
     assert row.orgn_ntby_tr_pbmn == 30791
+
+
+def test_market_intraday_values_for_maps_all_investor_types() -> None:
+    row = MarketIntradayFlowBody.model_validate(MARKET_INTRADAY_FLOW_RESPONSE).output[0]
+
+    assert {
+        investor_type: (
+            row.values_for(investor_type).net_buy_volume,
+            row.values_for(investor_type).net_buy_value,
+            row.values_for(investor_type).reports_investor,
+        )
+        for investor_type in InvestorType
+    } == {
+        InvestorType.FOREIGN: (-100609, -201498, True),
+        InvestorType.RETAIL: (51192, 163565, True),
+        InvestorType.INSTITUTION: (45228, 30791, True),
+        InvestorType.SECURITIES: (32061, 25253, True),
+        InvestorType.TRUST: (12136, -29664, True),
+        InvestorType.PRIVATE_EQUITY: (0, 0, False),
+        InvestorType.BANK: (0, 0, False),
+        InvestorType.INSURANCE: (-178, -858, True),
+        InvestorType.MERCHANT_BANK: (0, 0, False),
+        InvestorType.PENSION_FUND: (1209, 36059, True),
+        InvestorType.OTHER_ORGANIZATION: (0, 0, False),
+        InvestorType.OTHER_CORPORATION: (4189, 7143, True),
+    }
 
 
 def test_market_final_flow_body_parses_every_real_response_field() -> None:
@@ -90,10 +123,49 @@ def test_stock_final_flow_body_parses_every_real_response_field() -> None:
     assert body.output2[0].frgn_ntby_tr_pbmn == -867979
 
 
-def test_non_kis_json_error_uses_pydantic_raw_fallback() -> None:
-    response = {"detail": "bad gateway"}
+@pytest.mark.parametrize(
+    ("tr_id", "params"),
+    [
+        (InvestorFlowTrId.STOCK_INTRADAY, MarketIntradayFlowParams(market_code="999", industry_code="S001")),
+        (
+            InvestorFlowTrId.KOSPI_FINAL,
+            StockFinalFlowParams(
+                market_code="J",
+                stock_code="005930",
+                trade_date="20260724",
+                original_adjusted_price="",
+                other_classification_code="",
+            ),
+        ),
+    ],
+)
+def test_investor_flow_request_rejects_params_for_another_tr(
+    tr_id: InvestorFlowTrId,
+    params: StockIntradayFlowParams | MarketIntradayFlowParams | StockFinalFlowParams | MarketFinalFlowParams,
+) -> None:
+    with pytest.raises(ValidationError):
+        InvestorFlowRequest(
+            target="005930",
+            target_name="삼성전자",
+            venue=InvestorFlowVenue.KRX,
+            tr_id=tr_id,
+            params=params,
+        )
 
-    body = schemas.parse_investor_flow_body(InvestorFlowTrId.STOCK_INTRADAY, response)
 
-    assert isinstance(body, schemas.InvestorFlowRawBody)
-    assert body.root == response
+def test_non_kis_json_error_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        schemas.parse_investor_flow_body(
+            InvestorFlowTrId.STOCK_INTRADAY,
+            {"detail": "bad gateway"},
+        )
+
+
+def test_non_json_body_uses_typed_text_fallback() -> None:
+    body = schemas.parse_investor_flow_body(
+        InvestorFlowTrId.STOCK_INTRADAY,
+        "not json at all",
+    )
+
+    assert isinstance(body, schemas.InvestorFlowTextBody)
+    assert body.root == "not json at all"

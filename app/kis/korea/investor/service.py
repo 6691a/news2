@@ -6,6 +6,7 @@ import httpx
 from pydantic import JsonValue
 
 from app.core.config import Settings
+from app.core.http import raise_for_status
 from app.kis.korea.investor.requests import build_headers, build_requests
 from app.kis.korea.investor.schemas import (
     InvestorFlowProbeOptions,
@@ -60,14 +61,23 @@ class KISKoreaInvestorFlowService:
         for request in build_requests(options):
             response = await client.get(
                 url=f"{self.settings.kis_rest_domain.rstrip('/')}{request.tr_id.path}",
-                headers=build_headers(self.settings, token.access_token, request),
-                params=request.params,
+                headers=build_headers(
+                    self.settings,
+                    token.access_token,
+                    request,
+                ).model_dump(mode="json"),
+                params=request.params.model_dump(mode="json"),
             )
             # 5xx·502는 KIS나 게이트웨이의 일시 장애다. 여기서 예외로 올려야
             # Celery가 재시도한다. 그냥 담아두면 rt_cd 검사도 통과하지 못한 채
             # 0행 저장으로 끝나고, 그 시각 데이터는 영영 비어 있는다.
             # rt_cd != "0"(HTTP 200) 업무 오류는 재시도해도 같은 답이라 그대로 담는다.
-            response.raise_for_status()
+            raise_for_status(
+                response,
+                source="kis_investor_flow",
+                tr_id=request.tr_id.value,
+                target=request.target,
+            )
 
             try:
                 body = cast(JsonValue, response.json())

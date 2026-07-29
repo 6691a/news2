@@ -1,0 +1,176 @@
+from copy import deepcopy
+from datetime import UTC, date, datetime
+from decimal import Decimal
+
+import pytest
+from pydantic import ValidationError
+
+from app.macro.us_treasury.exceptions import TreasuryDataUnavailableError
+from app.macro.us_treasury.schemas import (
+    FredObservationsEnvelope,
+    FredObservationsRequest,
+    TreasuryPhase,
+    TreasuryProbeOptions,
+    TreasurySeries,
+    parse_fred_response,
+    parse_history_frame,
+)
+from tests.macro.us_treasury.fixtures import (
+    FRED_DGS10_EMPTY_RESPONSE,
+    FRED_DGS10_MISSING_RESPONSE,
+    FRED_DGS10_RESPONSE,
+    TNX_HISTORY_FRAME,
+    ZN_HISTORY_FRAME,
+)
+
+
+# ^TNX 샘플의 마지막 봉(12:22)이 끝난 뒤 시각.
+TNX_AS_OF = datetime(2026, 7, 27, 12, 25, tzinfo=UTC)
+# ZN=F 샘플의 마지막 봉(04:03)이 끝난 뒤 시각.
+ZN_AS_OF = datetime(2026, 7, 28, 4, 6, tzinfo=UTC)
+TARGET_DATE = date(2026, 7, 24)
+
+
+def test_external_requests_serialize_wire_parameters() -> None:
+    assert FredObservationsRequest(
+        series_id="DGS10",
+        api_key="fred-key",
+        observation_start=TARGET_DATE,
+        observation_end=TARGET_DATE,
+    ).model_dump(mode="json") == {
+        "series_id": "DGS10",
+        "api_key": "fred-key",
+        "file_type": "json",
+        "observation_start": "2026-07-24",
+        "observation_end": "2026-07-24",
+    }
+
+
+def test_parse_history_frame_keeps_yield_percent_and_utc_bar_start() -> None:
+    result = parse_history_frame(TreasurySeries.US_10Y, TNX_HISTORY_FRAME, as_of=TNX_AS_OF)
+
+    assert result.series is TreasurySeries.US_10Y
+    assert [bar.event_ts for bar in result.bars] == [
+        datetime(2026, 7, 27, 12, 20, tzinfo=UTC),
+        datetime(2026, 7, 27, 12, 21, tzinfo=UTC),
+        datetime(2026, 7, 27, 12, 22, tzinfo=UTC),
+    ]
+    # 수익률은 % 원본 그대로다. bp 환산은 조회하는 쪽의 몫이다.
+    assert result.bars[0].close == Decimal("4.647000312805176")
+    assert result.bars[2].close == Decimal("4.640999794006348")
+    assert result.bars[2].open == Decimal("4.647000312805176")
+    assert result.bars[2].high == Decimal("4.64900016784668")
+    assert result.bars[2].low == Decimal("4.638999938964844")
+
+
+def test_parse_history_frame_reads_futures_fraction_price_without_loss() -> None:
+    result = parse_history_frame(TreasurySeries.ZN_FUTURE, ZN_HISTORY_FRAME, as_of=ZN_AS_OF)
+
+    assert result.series is TreasurySeries.ZN_FUTURE
+    # 1/64 포인트 분수 가격이 Decimal로 그대로 보존돼야 한다.
+    assert result.bars[0].close == Decimal("108.65625")
+    assert result.bars[2].close == Decimal("108.671875")
+    assert result.bars[2].high == Decimal("108.671875")
+    # volume 같은 추가 필드는 DTO에 없어 무시된다.
+    assert not hasattr(result.bars[0], "volume")
+
+
+def test_parse_history_frame_drops_bars_without_close() -> None:
+    result = parse_history_frame(TreasurySeries.ZN_FUTURE, ZN_HISTORY_FRAME, as_of=ZN_AS_OF)
+
+    # 거래가 없던 04:03 봉은 close가 null이라 버린다.
+    assert [bar.event_ts for bar in result.bars] == [
+        datetime(2026, 7, 28, 4, 0, tzinfo=UTC),
+        datetime(2026, 7, 28, 4, 1, tzinfo=UTC),
+        datetime(2026, 7, 28, 4, 2, tzinfo=UTC),
+    ]
+
+
+def test_parse_history_frame_drops_the_bar_still_in_progress() -> None:
+    # 12:22 봉은 12:23이 되어야 확정된다. 저장하면 다음 회차가 갱신하지 못한다.
+    as_of = datetime(2026, 7, 27, 12, 22, 30, tzinfo=UTC)
+    result = parse_history_frame(TreasurySeries.US_10Y, TNX_HISTORY_FRAME, as_of=as_of)
+
+    assert [bar.event_ts for bar in result.bars] == [
+        datetime(2026, 7, 27, 12, 20, tzinfo=UTC),
+        datetime(2026, 7, 27, 12, 21, tzinfo=UTC),
+    ]
+
+
+def test_parse_history_frame_rejects_naive_index() -> None:
+    frame = TNX_HISTORY_FRAME.copy()
+    frame.index = frame.index.tz_localize(None)
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        parse_history_frame(TreasurySeries.US_10Y, frame, as_of=TNX_AS_OF)
+
+
+def test_parse_history_frame_rejects_missing_ohlc_column() -> None:
+    frame = TNX_HISTORY_FRAME.drop(columns="Close")
+
+    with pytest.raises(ValueError, match="Close"):
+        parse_history_frame(TreasurySeries.US_10Y, frame, as_of=TNX_AS_OF)
+
+
+def test_parse_fred_response_reads_target_date_observation_and_metadata() -> None:
+    response = FredObservationsEnvelope.model_validate(FRED_DGS10_RESPONSE)
+
+    observation = parse_fred_response(TreasurySeries.US_10Y, TARGET_DATE, response)
+
+    assert response.realtime_start == date(2026, 7, 28)
+    assert response.observation_start == TARGET_DATE
+    assert response.count == 1
+    assert response.observations[0].realtime_end == date(2026, 7, 28)
+    assert observation.series is TreasurySeries.US_10Y
+    assert observation.observation_date == TARGET_DATE
+    assert observation.yield_pct == Decimal("4.64")
+
+
+def test_parse_fred_response_raises_when_value_is_missing_marker() -> None:
+    response = FredObservationsEnvelope.model_validate(FRED_DGS10_MISSING_RESPONSE)
+
+    with pytest.raises(TreasuryDataUnavailableError):
+        parse_fred_response(TreasurySeries.US_10Y, TARGET_DATE, response)
+
+
+def test_parse_fred_response_raises_when_observations_are_empty() -> None:
+    response = FredObservationsEnvelope.model_validate(FRED_DGS10_EMPTY_RESPONSE)
+
+    with pytest.raises(TreasuryDataUnavailableError):
+        parse_fred_response(TreasurySeries.US_10Y, TARGET_DATE, response)
+
+
+def test_parse_fred_response_raises_when_another_date_is_returned() -> None:
+    response = FredObservationsEnvelope.model_validate(deepcopy(FRED_DGS10_RESPONSE))
+
+    with pytest.raises(TreasuryDataUnavailableError):
+        parse_fred_response(TreasurySeries.US_10Y, date(2026, 7, 23), response)
+
+
+def test_final_options_require_target_date() -> None:
+    with pytest.raises(ValidationError):
+        TreasuryProbeOptions(phase=TreasuryPhase.FINAL)
+
+
+def test_final_options_reject_futures_series() -> None:
+    # ZN 선물은 무료로 얻을 수 있는 공식 정산가가 없어 확정치 경로가 없다.
+    with pytest.raises(ValidationError):
+        TreasuryProbeOptions(
+            phase=TreasuryPhase.FINAL,
+            series=TreasurySeries.ZN_FUTURE,
+            target_date=TARGET_DATE,
+        )
+
+
+def test_intraday_options_reject_target_date() -> None:
+    with pytest.raises(ValidationError):
+        TreasuryProbeOptions(phase=TreasuryPhase.INTRADAY, target_date=TARGET_DATE)
+
+
+def test_series_maps_to_source_identifiers() -> None:
+    assert TreasurySeries.US_10Y.yahoo_symbol == "^TNX"
+    assert TreasurySeries.US_10Y.fred_series_id == "DGS10"
+    assert TreasurySeries.ZN_FUTURE.yahoo_symbol == "ZN=F"
+
+    with pytest.raises(ValueError):
+        _ = TreasurySeries.ZN_FUTURE.fred_series_id

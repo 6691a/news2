@@ -3,10 +3,9 @@
 from enum import StrEnum
 
 from sqlalchemy import Boolean, Text, UniqueConstraint, true
-from sqlalchemy import Enum as SQLAlchemyEnum
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.core.models import EntityModel
+from app.core.models import EntityModel, enum_column
 
 
 class Market(StrEnum):
@@ -35,13 +34,7 @@ class Instrument(EntityModel):
         comment="거래 시장에서 사용하는 종목 코드",
     )
     market: Mapped[Market] = mapped_column(
-        SQLAlchemyEnum(
-            Market,
-            name="instrument_market",
-            native_enum=False,
-            create_constraint=True,
-            validate_strings=True,
-        ),
+        enum_column(Market, name="instrument_market"),
         nullable=False,
         comment="종목이 상장된 거래 시장",
     )

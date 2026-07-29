@@ -7,16 +7,20 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.logging import get_logger
 from app.instruments.models import Instrument, Market
-from app.kis._time import KST
+from app.core._time import KST
 from app.kis.korea.investor.models import InvestorFlow
 from app.kis.korea.investor.schemas import (
+    INVESTOR_FLOW_FIELD_PARTS,
     InvestorFlowPhase,
     InvestorFlowProbeOptions,
     InvestorFlowResult,
     InvestorType,
     MarketFinalFlowBody,
     MarketIntradayFlowBody,
+    MarketInvestorFlowDetails,
+    MarketInvestorFlowValues,
     StockFinalFlowBody,
+    StockIntradayFlowDetails,
     StockIntradayFlowBody,
 )
 
@@ -26,23 +30,6 @@ logger = get_logger(__name__)
 # 재시도를 같은 눈금에 묶기 위한 슬롯 크기. 시장 수집이 30분 간격이고, 종목
 # 수집 시각(09:31·10:01·11:21·13:21·14:31)도 서로 다른 30분 슬롯에 떨어진다.
 SNAPSHOT_SLOT_MINUTES = 30
-
-# 시장 TR(FHPTJ04030000)의 투자자 유형별 필드 접두사와 순매수 수량 필드 접미사.
-# 접미사가 유형마다 qty/vol로 갈리므로 접두사만으로 필드명을 만들 수 없다.
-MARKET_INVESTORS: tuple[tuple[InvestorType, str, str], ...] = (
-    (InvestorType.FOREIGN, "frgn", "qty"),
-    (InvestorType.RETAIL, "prsn", "qty"),
-    (InvestorType.INSTITUTION, "orgn", "qty"),
-    (InvestorType.SECURITIES, "scrt", "qty"),
-    (InvestorType.TRUST, "ivtr", "qty"),
-    (InvestorType.PRIVATE_EQUITY, "pe_fund", "vol"),
-    (InvestorType.BANK, "bank", "qty"),
-    (InvestorType.INSURANCE, "insu", "qty"),
-    (InvestorType.MERCHANT_BANK, "mrbn", "qty"),
-    (InvestorType.PENSION_FUND, "fund", "qty"),
-    (InvestorType.OTHER_ORGANIZATION, "etc_orgt", "vol"),
-    (InvestorType.OTHER_CORPORATION, "etc_corp", "vol"),
-)
 
 
 def snapshot_slot_start(moment: datetime) -> datetime:
@@ -100,7 +87,7 @@ def to_flow_rows(
                     net_buy_value=None,
                     time_bucket=row.bsop_hour_gb,
                     # 합계는 외국인+기관의 파생값이라 별도 행으로 만들지 않는다.
-                    details={"sum_fake_ntby_qty": row.sum_fake_ntby_qty},
+                    details=StockIntradayFlowDetails(sum_fake_ntby_qty=row.sum_fake_ntby_qty),
                 )
                 for row in body.output2
                 for investor_type, net_buy_volume in (
@@ -109,7 +96,6 @@ def to_flow_rows(
                 )
             ]
         case MarketIntradayFlowBody() as body:
-            market_values = [row.model_dump() for row in body.output]
             return [
                 _to_market_row(
                     result=result,
@@ -118,13 +104,12 @@ def to_flow_rows(
                     is_provisional=is_provisional,
                     snapshot_ts=snapshot_ts,
                     investor_type=investor_type,
-                    prefix=prefix,
-                    volume_suffix=volume_suffix,
                     values=values,
                 )
-                for values in market_values
-                for investor_type, prefix, volume_suffix in MARKET_INVESTORS
-                if _reports_investor(prefix, volume_suffix, values)
+                for row in body.output
+                for investor_type in InvestorType
+                for values in (row.values_for(investor_type),)
+                if values.reports_investor
             ]
         case StockFinalFlowBody() as body:
             return [
@@ -135,13 +120,11 @@ def to_flow_rows(
                     is_provisional=is_provisional,
                     snapshot_ts=snapshot_ts,
                     investor_type=investor_type,
-                    prefix=prefix,
-                    volume_suffix=volume_suffix,
-                    values=row.model_dump(),
+                    values=row.values_for(investor_type),
                 )
                 for row in body.output2
                 if row.stck_bsop_date == trade_date.strftime("%Y%m%d")
-                for investor_type, prefix, volume_suffix in MARKET_INVESTORS
+                for investor_type in InvestorType
             ]
         case MarketFinalFlowBody() as body:
             return [
@@ -156,46 +139,17 @@ def to_flow_rows(
                     net_buy_value=getattr(row, f"{prefix}_ntby_tr_pbmn"),
                     time_bucket="",
                     # 시장 장마감 TR은 매수·매도 총량 없이 순매수만 제공한다.
-                    details={},
+                    details=None,
                 )
                 for row in body.output
                 if row.stck_bsop_date == trade_date.strftime("%Y%m%d")
-                for investor_type, prefix, volume_suffix in MARKET_INVESTORS
+                for investor_type in InvestorType
+                for prefix, volume_suffix in (INVESTOR_FLOW_FIELD_PARTS[investor_type],)
             ]
         case _:
             # TR 4종에는 모두 전용 DTO가 있으므로, 여기 오는 것은 rt_cd != "0"
-            # 오류 봉투이거나 JSON이 아닌 본문(InvestorFlowRawBody)이다.
+            # 오류 봉투이거나 JSON이 아닌 본문(InvestorFlowTextBody)이다.
             return []
-
-
-def _reports_investor(prefix: str, volume_suffix: str, values: dict[str, int]) -> bool:
-    """장중 시장 TR이 해당 투자자 유형을 실제로 집계했는지 판정한다.
-
-    FHPTJ04030000은 사모펀드·은행·종금·기타단체를 매도/매수/순매수 6개 필드 모두
-    "0"으로 돌려준다. 같은 세션의 외부 시세와 같은 날 마감 TR(FHPTJ04040000)은
-    그 유형들에 0이 아닌 순매수를 주므로, 이 0은 "거래 없음"이 아니라 미집계다.
-    0을 사실로 저장하면 기관 하위 합계가 조용히 어긋난다.
-
-    Args:
-        prefix: 투자자 유형의 KIS 필드 접두사.
-        volume_suffix: 순매수 수량 필드의 접미사(qty 또는 vol).
-        values: 시장 TR 행을 model_dump()한 값.
-
-    Returns:
-        여섯 필드 중 하나라도 0이 아니면 True.
-    """
-
-    return any(
-        values[field]
-        for field in (
-            f"{prefix}_seln_vol",
-            f"{prefix}_shnu_vol",
-            f"{prefix}_ntby_{volume_suffix}",
-            f"{prefix}_seln_tr_pbmn",
-            f"{prefix}_shnu_tr_pbmn",
-            f"{prefix}_ntby_tr_pbmn",
-        )
-    )
 
 
 def _to_market_row(
@@ -206,9 +160,7 @@ def _to_market_row(
     is_provisional: bool,
     snapshot_ts: datetime,
     investor_type: InvestorType,
-    prefix: str,
-    volume_suffix: str,
-    values: dict[str, int],
+    values: MarketInvestorFlowValues,
 ) -> InvestorFlow:
     """시장 TR 행에서 한 투자자 유형의 순매수를 뽑아 ORM 행으로 만든다."""
 
@@ -219,17 +171,12 @@ def _to_market_row(
         is_provisional=is_provisional,
         snapshot_ts=snapshot_ts,
         investor_type=investor_type,
-        net_buy_volume=values[f"{prefix}_ntby_{volume_suffix}"],
+        net_buy_volume=values.net_buy_volume,
         # *_ntby_tr_pbmn은 백만원 단위다. 환산하지 않고 원본 그대로 저장하고,
         # 억원이 필요한 쪽에서 100으로 나눈다. 여기서 곱해두면 되돌릴 수 없다.
-        net_buy_value=values[f"{prefix}_ntby_tr_pbmn"],
+        net_buy_value=values.net_buy_value,
         time_bucket="",
-        details={
-            "seln_vol": values[f"{prefix}_seln_vol"],
-            "shnu_vol": values[f"{prefix}_shnu_vol"],
-            "seln_tr_pbmn": values[f"{prefix}_seln_tr_pbmn"],
-            "shnu_tr_pbmn": values[f"{prefix}_shnu_tr_pbmn"],
-        },
+        details=values.details,
     )
 
 
@@ -244,7 +191,7 @@ def _to_row(
     net_buy_volume: int | None,
     net_buy_value: int | None,
     time_bucket: str,
-    details: dict[str, object],
+    details: StockIntradayFlowDetails | MarketInvestorFlowDetails | None,
 ) -> InvestorFlow:
     """모든 TR이 공유하는 InvestorFlow 행을 만든다."""
 
@@ -258,7 +205,7 @@ def _to_row(
         time_bucket=time_bucket,
         is_provisional=is_provisional,
         snapshot_ts=snapshot_ts,
-        details=details,
+        details=details.model_dump(mode="json") if details is not None else {},
     )
 
 

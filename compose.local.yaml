@@ -16,7 +16,7 @@ services:
       retries: 5
 
   postgres-mcp:
-    image: ghcr.io/pgedge/postgres-mcp:v1.0.0
+    image: ghcr.io/pgedge/postgres-mcp:sha-cc13a18-with-kb
     profiles: [mcp]
     environment:
       PGEDGE_DB_HOST: db

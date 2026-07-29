@@ -5,6 +5,7 @@ import httpx
 from redis.asyncio import Redis
 
 from app.core.config import Settings
+from app.core.http import raise_for_status
 from app.core.logging import get_logger
 from app.kis.schemas import (
     KISAuthRequest,
@@ -104,7 +105,7 @@ class KISAuth:
                 url=url,
                 json=body,
             )
-            response.raise_for_status()
+            raise_for_status(response, source="kis_auth_token")
             token = KISAuthTokenResponse(**response.json())
 
         ttl = int(token.expires_in) - TOKEN_TTL_MARGIN_SECONDS
@@ -143,7 +144,7 @@ class KISAuth:
                 url=url,
                 json=body,
             )
-            response.raise_for_status()
+            raise_for_status(response, source="kis_auth_token_remove")
             return KISAuthTokenRemoveResponse(**response.json())
 
     async def get_websocket_token(self) -> KISWebSocketTokenResponse:
@@ -171,5 +172,5 @@ class KISAuth:
                 url=url,
                 json=body,
             )
-            response.raise_for_status()
+            raise_for_status(response, source="kis_websocket_token")
             return KISWebSocketTokenResponse(**response.json())

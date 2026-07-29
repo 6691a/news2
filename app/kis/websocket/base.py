@@ -1,5 +1,4 @@
 import asyncio
-import json
 from abc import ABC
 from collections.abc import AsyncIterator
 from contextlib import suppress
@@ -18,6 +17,7 @@ from app.kis.exceptions import (
 )
 from app.kis.schemas import (
     KISTrType,
+    KISWebSocketPingPongMessage,
     KISWebSocketSubscription,
     KISWebSocketSubscriptionBody,
     KISWebSocketSubscriptionHeader,
@@ -393,16 +393,11 @@ class KISBaseWebSocketQuote(ABC):
     def _is_pingpong(message: str) -> bool:
         """수신 원문이 KIS PINGPONG 제어 메시지인지 반환한다."""
 
-        if not message.startswith("{"):
-            return False
-
         try:
-            payload = json.loads(message)
-        except json.JSONDecodeError:
+            pingpong = KISWebSocketPingPongMessage.model_validate_json(message)
+        except ValidationError:
             return False
-
-        header = payload.get("header")
-        return isinstance(header, dict) and header.get("tr_id") == "PINGPONG"
+        return pingpong.is_pingpong
 
     async def _stream_raw(self) -> AsyncIterator[str]:
         """수신 큐의 원문 메시지를 도착 순서대로 내보낸다.

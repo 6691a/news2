@@ -4,7 +4,7 @@ from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.kis._time import kst_datetime
+from app.core._time import kst_datetime
 from app.kis.overseas.models import OverseasOrderbook, OverseasTrade
 from app.kis.overseas.schemas import KISOverseasOrderbook, KISOverseasTrade
 

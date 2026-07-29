@@ -6,7 +6,7 @@ import httpx
 
 from app.core.celery import app
 from app.core.models import utc_now
-from app.kis._time import KST
+from app.core._time import KST
 
 # __main__을 그대로 재사용한다. 수동 실행(python -m app.kis.korea.investor)과
 # 배치가 같은 코드를 타므로 중복이 없다. import 시점에 컨테이너 wiring과
@@ -45,7 +45,7 @@ PERIODIC_RETRY_POLICY = {
 
 
 @app.task(name="kis.korea.investor.collect_stock_intraday", **FIXED_TIME_RETRY_POLICY)
-def collect_stock_intraday() -> None:
+def task_collect_stock_intraday() -> None:
     """종목별 장중 가집계를 한 번 수집해 저장한다.
 
     KIS 입력시간에만 갱신되는 데이터라 beat가 그 시각에만 호출한다. 실패하면
@@ -68,7 +68,7 @@ def collect_stock_intraday() -> None:
 
 
 @app.task(name="kis.korea.investor.collect_market_intraday", **PERIODIC_RETRY_POLICY)
-def collect_market_intraday() -> None:
+def task_collect_market_intraday() -> None:
     """시장 단위 장중 집계를 한 번 수집해 저장한다."""
 
     asyncio.run(
@@ -82,7 +82,7 @@ def collect_market_intraday() -> None:
 
 
 @app.task(name="kis.korea.investor.collect_final", **FIXED_TIME_RETRY_POLICY)
-def collect_final() -> None:
+def task_collect_final() -> None:
     """오늘(한국 날짜) 장 마감 확정 투자자 수급을 종목·시장 함께 수집해 저장한다.
 
     하루 1회뿐이라 실패하면 5분 간격으로 3회까지 다시 시도한다.

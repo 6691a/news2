@@ -27,26 +27,26 @@ def test_fixed_time_tasks_retry_on_a_flat_five_minute_delay(monkeypatch: pytest.
     # default_retry_delay 로 떨어진다.
     captured: dict[str, object] = {}
     monkeypatch.setattr(tasks, "main", _boom)
-    monkeypatch.setattr(tasks.collect_stock_intraday, "retry", _capture_retry(captured))
+    monkeypatch.setattr(tasks.task_collect_stock_intraday, "retry", _capture_retry(captured))
 
     with pytest.raises(Retry):
-        tasks.collect_stock_intraday()
+        tasks.task_collect_stock_intraday()
 
     assert "countdown" not in captured
-    assert tasks.collect_stock_intraday.default_retry_delay == 5 * 60
-    assert tasks.collect_stock_intraday.max_retries == 3
-    assert tasks.collect_final.default_retry_delay == 5 * 60
-    assert tasks.collect_final.max_retries == 3
+    assert tasks.task_collect_stock_intraday.default_retry_delay == 5 * 60
+    assert tasks.task_collect_stock_intraday.max_retries == 3
+    assert tasks.task_collect_final.default_retry_delay == 5 * 60
+    assert tasks.task_collect_final.max_retries == 3
 
 
 def test_market_task_keeps_exponential_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
     # 시장 집계는 30분마다 다음 회차가 오므로 짧게 물러나는 편이 맞다.
     captured: dict[str, object] = {}
     monkeypatch.setattr(tasks, "main", _boom)
-    monkeypatch.setattr(tasks.collect_market_intraday, "retry", _capture_retry(captured))
+    monkeypatch.setattr(tasks.task_collect_market_intraday, "retry", _capture_retry(captured))
 
     with pytest.raises(Retry):
-        tasks.collect_market_intraday()
+        tasks.task_collect_market_intraday()
 
     assert "countdown" in captured
 
@@ -59,4 +59,4 @@ def test_response_errors_are_not_retried(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(tasks, "main", raise_value_error)
 
     with pytest.raises(ValueError):
-        tasks.collect_stock_intraday()
+        tasks.task_collect_stock_intraday()

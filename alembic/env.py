@@ -27,6 +27,7 @@ import_module("app.instruments.models")
 import_module("app.kis.korea.models")
 import_module("app.kis.korea.investor.models")
 import_module("app.kis.overseas.models")
+import_module("app.macro.us_treasury.models")
 target_metadata = Base.metadata
 
 

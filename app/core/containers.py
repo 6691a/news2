@@ -12,6 +12,8 @@ from app.kis.korea.repository import KISKoreaTickRepository
 from app.kis.overseas.quote import KISOverseasWebSocketQuote
 from app.kis.overseas.repository import KISOverseasTickRepository
 from app.kis.schemas import KISWebSocketTokenResponse
+from app.macro.us_treasury.repository import UsTreasuryYieldRepository
+from app.macro.us_treasury.service import UsTreasuryYieldService
 
 
 async def provide_websocket_token(auth: KISAuth) -> KISWebSocketTokenResponse:
@@ -72,6 +74,14 @@ class Container(containers.DeclarativeContainer):
     )
     korea_investor_flow_repository = providers.Factory(
         KISInvestorFlowRepository,
+        session_factory=database.provided.session_factory,
+    )
+    us_treasury_yield_service = providers.Factory(
+        UsTreasuryYieldService,
+        settings=settings,
+    )
+    us_treasury_yield_repository = providers.Factory(
+        UsTreasuryYieldRepository,
         session_factory=database.provided.session_factory,
     )
 

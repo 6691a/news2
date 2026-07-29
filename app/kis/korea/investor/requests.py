@@ -2,12 +2,20 @@
 
 from app.core.config import Settings
 from app.kis.korea.investor.schemas import (
+    InvestorFlowMarketDivisionCode,
+    InvestorFlowMarketIndexCode,
     InvestorFlowPhase,
     InvestorFlowProbeOptions,
     InvestorFlowRequest,
+    InvestorFlowRequestHeaders,
     InvestorFlowScope,
+    InvestorFlowStockMarketCode,
     InvestorFlowTrId,
     InvestorFlowVenue,
+    MarketFinalFlowParams,
+    MarketIntradayFlowParams,
+    StockFinalFlowParams,
+    StockIntradayFlowParams,
 )
 
 
@@ -31,7 +39,7 @@ def build_requests(options: InvestorFlowProbeOptions) -> tuple[InvestorFlowReque
                 target_name=stock_name,
                 venue=InvestorFlowVenue.UNSPECIFIED,
                 tr_id=InvestorFlowTrId.STOCK_INTRADAY,
-                params={"MKSC_SHRN_ISCD": stock_code},
+                params=StockIntradayFlowParams(stock_code=stock_code),
             )
             for stock_code, stock_name in stocks
         )
@@ -41,10 +49,10 @@ def build_requests(options: InvestorFlowProbeOptions) -> tuple[InvestorFlowReque
                 target_name="코스피",
                 venue=InvestorFlowVenue.KRX,
                 tr_id=InvestorFlowTrId.KOSPI_INTRADAY,
-                params={
-                    "FID_INPUT_ISCD": "999",
-                    "FID_INPUT_ISCD_2": "S001",
-                },
+                params=MarketIntradayFlowParams(
+                    market_code="999",
+                    industry_code="S001",
+                ),
             ),
         )
         return stock_requests + (market_requests if wants_market else ())
@@ -53,8 +61,8 @@ def build_requests(options: InvestorFlowProbeOptions) -> tuple[InvestorFlowReque
     assert trade_date is not None
     trade_date_param = trade_date.strftime("%Y%m%d")
     market_codes = (
-        (InvestorFlowVenue.KRX, "J"),
-        (InvestorFlowVenue.NXT, "NX"),
+        (InvestorFlowVenue.KRX, InvestorFlowStockMarketCode.KRX),
+        (InvestorFlowVenue.NXT, InvestorFlowStockMarketCode.NXT),
     )
     stock_requests = tuple(
         InvestorFlowRequest(
@@ -62,13 +70,13 @@ def build_requests(options: InvestorFlowProbeOptions) -> tuple[InvestorFlowReque
             target_name=stock_name,
             venue=venue,
             tr_id=InvestorFlowTrId.STOCK_FINAL,
-            params={
-                "FID_COND_MRKT_DIV_CODE": market_code,
-                "FID_INPUT_ISCD": stock_code,
-                "FID_INPUT_DATE_1": trade_date_param,
-                "FID_ORG_ADJ_PRC": "",
-                "FID_ETC_CLS_CODE": "",
-            },
+            params=StockFinalFlowParams(
+                market_code=market_code,
+                stock_code=stock_code,
+                trade_date=trade_date_param,
+                original_adjusted_price="",
+                other_classification_code="",
+            ),
         )
         for stock_code, stock_name in stocks
         for venue, market_code in market_codes
@@ -79,14 +87,14 @@ def build_requests(options: InvestorFlowProbeOptions) -> tuple[InvestorFlowReque
             target_name="코스피",
             venue=InvestorFlowVenue.KRX,
             tr_id=InvestorFlowTrId.KOSPI_FINAL,
-            params={
-                "FID_COND_MRKT_DIV_CODE": "U",
-                "FID_INPUT_ISCD": "0001",
-                "FID_INPUT_DATE_1": trade_date_param,
-                "FID_INPUT_ISCD_1": "KSP",
-                "FID_INPUT_DATE_2": trade_date_param,
-                "FID_INPUT_ISCD_2": "0001",
-            },
+            params=MarketFinalFlowParams(
+                market_division_code=InvestorFlowMarketDivisionCode.INDUSTRY,
+                market_code="0001",
+                trade_date_start=trade_date_param,
+                market_index_code=InvestorFlowMarketIndexCode.KOSPI,
+                trade_date_end=trade_date_param,
+                industry_code="0001",
+            ),
         ),
     )
     return stock_requests + (market_requests if wants_market else ())
@@ -96,7 +104,7 @@ def build_headers(
     settings: Settings,
     access_token: str,
     request: InvestorFlowRequest,
-) -> dict[str, str]:
+) -> InvestorFlowRequestHeaders:
     """공식 KIS REST 조회 헤더를 구성한다.
 
     Args:
@@ -108,18 +116,13 @@ def build_headers(
         KIS GET 조회에 사용할 HTTP 헤더.
     """
 
-    return {
-        "Content-Type": "application/json",
-        "Accept": "text/plain",
-        "charset": "UTF-8",
-        "User-Agent": (
+    return InvestorFlowRequestHeaders(
+        user_agent=(
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
         ),
-        "authorization": f"Bearer {access_token}",
-        "appkey": settings.kis_app_key,
-        "appsecret": settings.kis_app_secret,
-        "tr_id": request.tr_id.value,
-        "custtype": "P",
-        "tr_cont": "",
-    }
+        authorization=f"Bearer {access_token}",
+        app_key=settings.kis_app_key,
+        app_secret=settings.kis_app_secret,
+        tr_id=request.tr_id,
+    )

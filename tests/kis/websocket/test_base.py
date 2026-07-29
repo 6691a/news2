@@ -1,7 +1,6 @@
 import asyncio
 import inspect
 import json
-import logging
 from contextlib import suppress
 from typing import cast
 
@@ -176,6 +175,22 @@ def test_payload_uses_generic_websocket_subscription() -> None:
     assert payload.body.input.tr_key == "005930"
 
 
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ('{"header":{"tr_id":"PINGPONG","datetime":"20260710171541"}}', True),
+        (
+            '{"header":{"tr_id":"TR00","tr_key":"KEY00"},"body":'
+            '{"rt_cd":"0","msg_cd":"OPSP0000","msg1":"SUBSCRIBE SUCCESS"}}',
+            False,
+        ),
+        ('{"header":', False),
+    ],
+)
+def test_is_pingpong_validates_control_message(message: str, expected: bool) -> None:
+    assert KISBaseWebSocketQuote._is_pingpong(message) is expected
+
+
 @pytest.mark.asyncio
 async def test_run_disables_websocket_protocol_ping(
     monkeypatch: pytest.MonkeyPatch,
@@ -261,9 +276,7 @@ async def test_subscription_rejection_raises_response_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_already_subscribed_is_treated_as_active(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+async def test_already_subscribed_is_treated_as_active() -> None:
     quote = make_quote()
     subscription = make_subscription()
     await quote.subscribe_wire(subscription)
@@ -278,11 +291,9 @@ async def test_already_subscribed_is_treated_as_active(
     )
     await websocket.close()
 
-    with caplog.at_level(logging.WARNING, logger="app.kis.websocket.base"):
-        await quote._receive(cast(websockets.ClientConnection, websocket))
+    await quote._receive(cast(websockets.ClientConnection, websocket))
 
     assert quote.active_subscriptions == frozenset({subscription})
-    assert "ALREADY IN SUBSCRIBE" in caplog.text
     assert quote._queue.empty()
 
 

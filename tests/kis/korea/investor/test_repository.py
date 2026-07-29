@@ -7,7 +7,6 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.kis.korea.investor.repository import (
-    MARKET_INVESTORS,
     KISInvestorFlowRepository,
     snapshot_slot_start,
     to_flow_rows,
@@ -155,7 +154,7 @@ def test_stock_final_flow_maps_requested_day_to_every_investor_type() -> None:
         snapshot_ts=SNAPSHOT_TS,
     )
 
-    assert len(rows) == len(MARKET_INVESTORS)
+    assert len(rows) == len(InvestorType)
     assert {row.investor_type for row in rows} == set(InvestorType)
     assert all(row.trade_date == date(2026, 7, 24) for row in rows)
     assert all(row.time_bucket == "" for row in rows)
@@ -186,7 +185,7 @@ def test_market_final_flow_maps_every_investor_type() -> None:
         snapshot_ts=SNAPSHOT_TS,
     )
 
-    assert len(rows) == len(MARKET_INVESTORS)
+    assert len(rows) == len(InvestorType)
     assert {row.investor_type for row in rows} == set(InvestorType)
     assert all(row.trade_date == date(2026, 7, 24) for row in rows)
     assert all(row.time_bucket == "" for row in rows)
@@ -260,5 +259,5 @@ async def test_save_skips_only_the_venue_already_stored_in_the_slot() -> None:
     saved = await repository.save(results, FINAL_OPTIONS, SNAPSHOT_TS)
 
     rows = session.add_all.call_args.args[0]
-    assert saved == len(rows) == len(MARKET_INVESTORS)
+    assert saved == len(rows) == len(InvestorType)
     assert {row.venue for row in rows} == {InvestorFlowVenue.NXT}

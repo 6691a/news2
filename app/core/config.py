@@ -42,5 +42,8 @@ class Settings(BaseSettings):
     kis_virtual_rest_domain: str
     kis_virtual_websocket_domain: str
 
+    # FRED(세인트루이스 연은). 미국 국채 확정 수익률 조회에만 쓴다.
+    fred_api_key: str
+
 
 settings = Settings()

@@ -9,6 +9,7 @@ from app.kis.korea.repository import KISKoreaTickRepository
 from app.kis.overseas.quote import KISOverseasWebSocketQuote
 from app.kis.overseas.repository import KISOverseasTickRepository
 from app.kis.schemas import KISWebSocketTokenResponse
+from app.macro.us_treasury.service import UsTreasuryYieldService
 
 
 def test_container_provides_instrument_repository() -> None:
@@ -39,6 +40,15 @@ def test_container_provides_korea_investor_flow_service() -> None:
     assert isinstance(service, KISKoreaInvestorFlowService)
     assert service.settings is container.settings()
     assert isinstance(service.auth, KISAuth)
+
+
+def test_container_provides_treasury_service_without_cookie_dependency() -> None:
+    container = Container()
+
+    service = container.us_treasury_yield_service()
+
+    assert isinstance(service, UsTreasuryYieldService)
+    assert service.settings is container.settings()
 
 
 @pytest.mark.asyncio

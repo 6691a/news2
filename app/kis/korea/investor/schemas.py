@@ -3,9 +3,11 @@
 from datetime import date
 from decimal import Decimal
 from enum import StrEnum
-from typing import Self
+from typing import Self, cast
 
-from pydantic import BaseModel, JsonValue, RootModel, model_validator
+from pydantic import BaseModel, Field, JsonValue, RootModel, model_validator
+
+from app.kis.schemas.common import KISBaseModel
 
 
 class InvestorFlowPhase(StrEnum):
@@ -60,6 +62,22 @@ class InvestorType(StrEnum):
     OTHER_CORPORATION = "other_corporation"  # etc_corp_*  기타 법인
 
 
+INVESTOR_FLOW_FIELD_PARTS: dict[InvestorType, tuple[str, str]] = {
+    InvestorType.FOREIGN: ("frgn", "qty"),
+    InvestorType.RETAIL: ("prsn", "qty"),
+    InvestorType.INSTITUTION: ("orgn", "qty"),
+    InvestorType.SECURITIES: ("scrt", "qty"),
+    InvestorType.TRUST: ("ivtr", "qty"),
+    InvestorType.PRIVATE_EQUITY: ("pe_fund", "vol"),
+    InvestorType.BANK: ("bank", "qty"),
+    InvestorType.INSURANCE: ("insu", "qty"),
+    InvestorType.MERCHANT_BANK: ("mrbn", "qty"),
+    InvestorType.PENSION_FUND: ("fund", "qty"),
+    InvestorType.OTHER_ORGANIZATION: ("etc_orgt", "vol"),
+    InvestorType.OTHER_CORPORATION: ("etc_corp", "vol"),
+}
+
+
 class InvestorFlowTrId(StrEnum):
     """투자자 수급 REST API의 HTTP TR ID."""
 
@@ -78,6 +96,66 @@ class InvestorFlowTrId(StrEnum):
             self.STOCK_FINAL: "/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily",
             self.KOSPI_FINAL: "/uapi/domestic-stock/v1/quotations/inquire-investor-daily-by-market",
         }[self]
+
+
+class InvestorFlowStockMarketCode(StrEnum):
+    """종목별 마감 수급 조회 시장 코드."""
+
+    KRX = "J"
+    NXT = "NX"
+    UNIFIED = "UN"
+
+
+class InvestorFlowMarketDivisionCode(StrEnum):
+    """시장별 마감 수급 조회 시장 구분 코드."""
+
+    INDUSTRY = "U"
+
+
+class InvestorFlowMarketIndexCode(StrEnum):
+    """시장별 마감 수급 조회 지수 코드."""
+
+    KOSPI = "KSP"
+    KOSDAQ = "KSQ"
+
+
+class StockIntradayFlowParams(KISBaseModel):
+    """종목별 장중 수급 조회 파라미터."""
+
+    stock_code: str = Field(serialization_alias="MKSC_SHRN_ISCD")
+
+
+class MarketIntradayFlowParams(KISBaseModel):
+    """시장별 장중 수급 조회 파라미터."""
+
+    market_code: str = Field(serialization_alias="FID_INPUT_ISCD")
+    industry_code: str = Field(serialization_alias="FID_INPUT_ISCD_2")
+
+
+class StockFinalFlowParams(KISBaseModel):
+    """종목별 마감 수급 조회 파라미터."""
+
+    market_code: InvestorFlowStockMarketCode = Field(serialization_alias="FID_COND_MRKT_DIV_CODE")
+    stock_code: str = Field(serialization_alias="FID_INPUT_ISCD")
+    trade_date: str = Field(serialization_alias="FID_INPUT_DATE_1", pattern=r"^\d{8}$")
+    original_adjusted_price: str = Field(serialization_alias="FID_ORG_ADJ_PRC")
+    other_classification_code: str = Field(serialization_alias="FID_ETC_CLS_CODE")
+
+
+class MarketFinalFlowParams(KISBaseModel):
+    """시장별 마감 수급 조회 파라미터."""
+
+    market_division_code: InvestorFlowMarketDivisionCode = Field(serialization_alias="FID_COND_MRKT_DIV_CODE")
+    market_code: str = Field(serialization_alias="FID_INPUT_ISCD")
+    trade_date_start: str = Field(serialization_alias="FID_INPUT_DATE_1", pattern=r"^\d{8}$")
+    market_index_code: InvestorFlowMarketIndexCode = Field(serialization_alias="FID_INPUT_ISCD_1")
+    trade_date_end: str = Field(serialization_alias="FID_INPUT_DATE_2", pattern=r"^\d{8}$")
+    industry_code: str = Field(serialization_alias="FID_INPUT_ISCD_2")
+
+
+type InvestorFlowParams = (
+    StockIntradayFlowParams | MarketIntradayFlowParams | StockFinalFlowParams | MarketFinalFlowParams
+)
 
 
 class InvestorFlowProbeOptions(BaseModel):
@@ -103,7 +181,36 @@ class InvestorFlowRequest(BaseModel):
     target_name: str
     venue: InvestorFlowVenue
     tr_id: InvestorFlowTrId
-    params: dict[str, str]
+    params: InvestorFlowParams
+
+    @model_validator(mode="after")
+    def validate_params_for_tr_id(self) -> Self:
+        """TR ID에 대응하는 파라미터 DTO인지 검증한다."""
+
+        expected_type = {
+            InvestorFlowTrId.STOCK_INTRADAY: StockIntradayFlowParams,
+            InvestorFlowTrId.KOSPI_INTRADAY: MarketIntradayFlowParams,
+            InvestorFlowTrId.STOCK_FINAL: StockFinalFlowParams,
+            InvestorFlowTrId.KOSPI_FINAL: MarketFinalFlowParams,
+        }[self.tr_id]
+        if not isinstance(self.params, expected_type):
+            raise ValueError(f"{self.tr_id.value} requires {expected_type.__name__}")
+        return self
+
+
+class InvestorFlowRequestHeaders(KISBaseModel):
+    """KIS 투자자 수급 REST 요청 공통 헤더."""
+
+    content_type: str = Field(serialization_alias="Content-Type", default="application/json")
+    accept: str = Field(serialization_alias="Accept", default="text/plain")
+    charset: str = "UTF-8"
+    user_agent: str = Field(serialization_alias="User-Agent")
+    authorization: str
+    app_key: str = Field(serialization_alias="appkey")
+    app_secret: str = Field(serialization_alias="appsecret")
+    tr_id: InvestorFlowTrId
+    customer_type: str = Field(serialization_alias="custtype", default="P")
+    tr_cont: str = ""
 
 
 # --- 응답 본문 DTO ---------------------------------------------------------
@@ -126,10 +233,48 @@ class StockIntradayFlowRow(BaseModel):
     sum_fake_ntby_qty: int  # 외국인·기관 합산 가집계 순매수 수량(주)
 
 
+class StockIntradayFlowDetails(BaseModel):
+    """종목별 장중 수급 저장 상세."""
+
+    sum_fake_ntby_qty: int
+
+
 class StockIntradayFlowBody(InvestorFlowEnvelope):
     """TR HHPTJ04160200 응답 본문."""
 
     output2: list[StockIntradayFlowRow]
+
+
+class MarketInvestorFlowDetails(BaseModel):
+    """시장 수급의 매도·매수 원본 값."""
+
+    seln_vol: int
+    shnu_vol: int
+    seln_tr_pbmn: int
+    shnu_tr_pbmn: int
+
+
+class MarketInvestorFlowValues(BaseModel):
+    """투자자 유형 하나의 정규화된 시장 수급 값."""
+
+    net_buy_volume: int
+    net_buy_value: int
+    details: MarketInvestorFlowDetails
+
+    @property
+    def reports_investor(self) -> bool:
+        """시장 TR이 해당 투자자 유형을 실제로 집계했는지 반환한다."""
+
+        return any(
+            (
+                self.net_buy_volume,
+                self.net_buy_value,
+                self.details.seln_vol,
+                self.details.shnu_vol,
+                self.details.seln_tr_pbmn,
+                self.details.shnu_tr_pbmn,
+            )
+        )
 
 
 class MarketIntradayFlowRow(BaseModel):
@@ -207,6 +352,21 @@ class MarketIntradayFlowRow(BaseModel):
     etc_corp_seln_tr_pbmn: int  # 기타 법인 매도 거래대금(백만원)
     etc_corp_shnu_tr_pbmn: int  # 기타 법인 매수 거래대금(백만원)
     etc_corp_ntby_tr_pbmn: int  # 기타 법인 순매수 거래대금(백만원)
+
+    def values_for(self, investor_type: InvestorType) -> MarketInvestorFlowValues:
+        """한 투자자 유형의 매도·매수·순매수 값을 정규화한다."""
+
+        prefix, volume_suffix = INVESTOR_FLOW_FIELD_PARTS[investor_type]
+        return MarketInvestorFlowValues(
+            net_buy_volume=cast(int, getattr(self, f"{prefix}_ntby_{volume_suffix}")),
+            net_buy_value=cast(int, getattr(self, f"{prefix}_ntby_tr_pbmn")),
+            details=MarketInvestorFlowDetails(
+                seln_vol=cast(int, getattr(self, f"{prefix}_seln_vol")),
+                shnu_vol=cast(int, getattr(self, f"{prefix}_shnu_vol")),
+                seln_tr_pbmn=cast(int, getattr(self, f"{prefix}_seln_tr_pbmn")),
+                shnu_tr_pbmn=cast(int, getattr(self, f"{prefix}_shnu_tr_pbmn")),
+            ),
+        )
 
 
 class MarketIntradayFlowBody(InvestorFlowEnvelope):
@@ -318,8 +478,8 @@ class MarketFinalFlowBody(InvestorFlowEnvelope):
     output: list[MarketFinalFlowRow]
 
 
-class InvestorFlowRawBody(RootModel[JsonValue]):
-    """전용 DTO가 없거나 JSON이 아닌 KIS 응답 본문."""
+class InvestorFlowTextBody(RootModel[str]):
+    """JSON이 아닌 HTTP 200 응답 원문."""
 
 
 type InvestorFlowBody = (
@@ -328,7 +488,7 @@ type InvestorFlowBody = (
     | StockFinalFlowBody
     | MarketFinalFlowBody
     | InvestorFlowEnvelope
-    | InvestorFlowRawBody
+    | InvestorFlowTextBody
 )
 
 
@@ -338,19 +498,19 @@ def parse_investor_flow_body(
 ) -> InvestorFlowBody:
     """TR ID와 결과 코드에 맞는 투자자 수급 응답 DTO를 반환한다."""
 
-    if isinstance(body, dict):
-        if body.get("rt_cd") == "0":
-            if tr_id is InvestorFlowTrId.STOCK_INTRADAY:
-                return StockIntradayFlowBody.model_validate(body)
-            if tr_id is InvestorFlowTrId.KOSPI_INTRADAY:
-                return MarketIntradayFlowBody.model_validate(body)
-            if tr_id is InvestorFlowTrId.STOCK_FINAL:
-                return StockFinalFlowBody.model_validate(body)
-            if tr_id is InvestorFlowTrId.KOSPI_FINAL:
-                return MarketFinalFlowBody.model_validate(body)
-        elif {"rt_cd", "msg_cd", "msg1"} <= body.keys():
-            return InvestorFlowEnvelope.model_validate(body)
-    return InvestorFlowRawBody(root=body)
+    if isinstance(body, str):
+        return InvestorFlowTextBody(root=body)
+
+    envelope = InvestorFlowEnvelope.model_validate(body)
+    if envelope.rt_cd != "0":
+        return envelope
+    if tr_id is InvestorFlowTrId.STOCK_INTRADAY:
+        return StockIntradayFlowBody.model_validate(body)
+    if tr_id is InvestorFlowTrId.KOSPI_INTRADAY:
+        return MarketIntradayFlowBody.model_validate(body)
+    if tr_id is InvestorFlowTrId.STOCK_FINAL:
+        return StockFinalFlowBody.model_validate(body)
+    return MarketFinalFlowBody.model_validate(body)
 
 
 class InvestorFlowResult(BaseModel):

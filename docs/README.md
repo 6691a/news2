@@ -80,6 +80,7 @@ T3 = 수집·저장만 하고 분석 미투입 (히스토리 축적 목적, 백�
 | 환율 | **USD/CNY·CNH (위안)** | yfinance (`CNY=X`, `CNH=X`) | T2 | 역외 CNH가 시장 스트레스를 더 빠르게 반영 — 급변 시 T1 승격. 위안 절하 = 리스크 오프 |
 | 환율 | **달러인덱스 (DXY)** | yfinance (`DX-Y.NYB`) | T1 | 글로벌 달러 유동성 종합 |
 | 채권 (미) | **국채 2Y / 10Y / 30Y 금리 + 10Y-2Y 스프레드** | FRED API (`DGS2`, `DGS10`, `DGS30`) + yfinance `^TNX` | T1 | 빅테크 밸류에이션 직결, 장단기 역전 = 침체 신호 |
+| 선물 | **미 10년물 국채선물 ZN (가격)** | yfinance 상당(Yahoo chart) `ZN=F` | T2 | 아시아 세션 미 금리 방향성 신호 — 수익률 환산(CTD) 안 함, 확정 정산가 미수집 |
 | 채권 (한) | **국고채 3Y / 10Y + 한은 기준금리** | 한국은행 ECOS OpenAPI | T1 | 국내 금리 환경 |
 | 채권 (일) | **일본 국채 10Y 금리 + BOJ 금리 결정·총재 발언** | 크롤링(투자정보 사이트) + econ_calendar 이벤트 | T2 | 엔캐리 해석 보강 — JGB 금리 급등·BOJ 긴축 = 엔캐리 청산 리스크 |
 | 반도체 | **TSMC 월매출** | TSMC IR 발표 (매월 10일경) 크롤링 | T1 | 글로벌 반도체 수요의 월 단위 최선행 지표 — NVDA·AAPL·국내 반도체 공통 |
@@ -176,7 +177,7 @@ flowchart TD
 | 뉴스 | 5~15분 | 실시간 대응의 실질 병목 지점 |
 | 공시 | 30분~1시간 | |
 | 지수/선물/환율 | 15분 | USD/JPY, JPY/KRW 포함 |
-| 채권 금리 | 1시간 ~ 일 1회 | 금리는 변동 빈도 낮음 — 일별 스냅샷으로 충분 |
+| 채권 금리 | 장중 15분 폴링(`^TNX`·`ZN=F` 1분봉) + 미 영업일 1회 확정(FRED `DGS10`) | 금리 레벨의 소스 오브 트루스는 FRED 확정치. ZN 선물은 아시아 세션 방향성 신호 전용 |
 | 수급 동향 (현물/선물) | 장중 잠정치 30분~1시간, 마감 후 확정치 1회 | 장중 데이터는 **잠정치**(provisional) 플래그로 구분 저장. 덮어쓰지 않고 `snapshot_ts`별로 이력 축적 |
 
 ### 3.3 스케줄링
@@ -192,6 +193,13 @@ flowchart TD
 - KIS REST 접근토큰은 발급 제한(1분 1회)이 있으므로 Redis에 캐시해 모든 프로세스가
   공유한다. 만료는 `expires_in`에서 여유분 10분을 뺀 Redis TTL이 강제하며, 캐시가
   살아 있는 동안에는 `/oauth2/tokenP`를 호출하지 않는다.
+- Yahoo 1분봉은 yfinance로 수집하며, yfinance가 내부에서 curl_cffi 브라우저 임퍼소네이션을 사용한다.
+  쿠키만 실어도 TLS(JA3/JA4)·HTTP/2 지문이 브라우저와 달라 엣지 쿼터
+  (`429 Edge: Too Many Requests`)에 걸리기 때문이다. 요청 헤더는 손으로 만들지 않고
+  임퍼소네이션이 심는 기본값을 그대로 쓴다.
+- Yahoo 세션 쿠키는 `finance.yahoo.com`에서 한 번 받아 Redis에 6시간 TTL로 캐시하고
+  chart 호출마다 실어 보낸다. 쿠키 획득과 chart 호출은 같은 임퍼소네이션 세션을 탄다.
+  401/403/429면 1회만 재획득해 재시도하고, 그래도 429면 재시도 없이 다음 15분 회차로 넘긴다.
 
 ### 3.4 로깅
 
@@ -350,6 +358,38 @@ CREATE TABLE investor_flows (
 CREATE INDEX ON investor_flows (instrument_id, trade_date);
 -- 장중 잠정치를 확정치로 "덮어쓰지" 않고, snapshot_ts를 키에 포함해 이력을 그대로 축적한다
 -- (외국인이 몇 시부터 순매수로 돌았는지 같은 장중 흐름 분석을 위해).
+
+-- 미국 국채 10년물 (수익률 ^TNX + 국채선물 ZN=F 장중 1분봉, FRED DGS10 일별 확정치)
+-- 설계 노트:
+--  · v1은 계열 코드 직저장, instruments 정착 후 FK 전환 (tick 테이블들과 같은 방침)
+--  · 수익률은 % 원본, 선물은 가격 포인트 원본 그대로 저장 — bp·CTD 환산은 조회하는 쪽의 몫
+--  · details JSONB 없음 — Yahoo는 Unix epoch(UTC), FRED는 ISO 날짜만 주므로 보존할
+--    현지 시각 원본이 없고, 남길 값이 전부 스칼라라 typed 컬럼으로 승격했다
+--  · 장중 테이블은 두 계열 공용. 소스·파싱·그레인·저장 로직이 같고 단위만 다르다
+CREATE TABLE us_treasury_bars (
+  id          BIGSERIAL PRIMARY KEY,
+  series      TEXT NOT NULL,             -- 'US10Y'(수익률 %) | 'ZN'(선물 가격 포인트)
+  event_ts    TIMESTAMPTZ NOT NULL,      -- 봉 시작 UTC 시각. 진행 중인 봉은 저장하지 않는다
+  open        NUMERIC(16, 8),            -- 소스가 null이면 NULL
+  high        NUMERIC(16, 8),
+  low         NUMERIC(16, 8),
+  close       NUMERIC(16, 8) NOT NULL,   -- 1/64·1/128 분수 가격까지 손실 없이 담는 scale
+  snapshot_ts TIMESTAMPTZ NOT NULL,      -- 응답 수신 UTC 시각(추적용, 키 아님)
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (series, event_ts)              -- 폐장·휴장 폴링의 재수집은 ON CONFLICT DO NOTHING으로 흘린다
+);
+
+CREATE TABLE us_treasury_yield_daily (
+  id               BIGSERIAL PRIMARY KEY,
+  series           TEXT NOT NULL,        -- 확정치는 'US10Y'만 존재 (ZN은 무료 공식 정산가 없음)
+  observation_date DATE NOT NULL,        -- ET 영업일. dispatch 시점에 고정해 넘긴다
+  yield_pct        NUMERIC(8, 4) NOT NULL,  -- 연준 H.15 CMT 수익률(%)
+  snapshot_ts      TIMESTAMPTZ NOT NULL,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (series, observation_date)
+);
 
 -- T3 수집 전용 일별 지표 (프로그램 매매, 공매도, 대차/신용 잔고 등)
 CREATE TABLE daily_metrics (

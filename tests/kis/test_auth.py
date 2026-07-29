@@ -1,6 +1,7 @@
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from fastapi import status
 import httpx
 import pytest
 from redis.asyncio import Redis
@@ -72,6 +73,9 @@ def _mock_client(response_body: dict[str, object]) -> tuple[AsyncMock, MagicMock
 
     response = MagicMock(spec=httpx.Response)
     response.json.return_value = response_body
+    # spec mock의 is_error는 기본이 truthy라 성공 응답임을 명시해야 한다.
+    response.is_error = False
+    response.status_code = status.HTTP_200_OK
     client = AsyncMock(spec=httpx.AsyncClient)
     client.post.return_value = response
     context_manager = MagicMock()
@@ -161,13 +165,13 @@ def test_token_cache_key_separates_virtual_and_real_environments() -> None:
 
 @pytest.mark.asyncio
 async def test_remove_auth_token_requests_token_revocation() -> None:
-    client, context_manager = _mock_client({"code": 200, "message": "success"})
+    client, context_manager = _mock_client({"code": status.HTTP_200_OK, "message": "success"})
     auth = KISAuth(_settings(), _mock_redis())
 
     with patch("app.kis.auth.httpx.AsyncClient", return_value=context_manager):
         result = await auth.remove_auth_token("access-token")
 
-    assert result.code == 200
+    assert result.code == status.HTTP_200_OK
     client.post.assert_awaited_once_with(
         headers={
             "Content-Type": "application/json",

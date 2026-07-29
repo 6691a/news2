@@ -16,7 +16,7 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0.51",
     "structlog>=26.1.0",
     "websockets>=16.0,<17.0",
-    "yfinance>=1.5.1",
+    "yfinance>=1.5.2",
 ]
 
 [dependency-groups]

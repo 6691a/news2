@@ -1,13 +1,15 @@
 from datetime import date
 
-from app.kis.korea.investor.requests import build_requests
+from app.kis.korea.investor.requests import build_headers, build_requests
 from app.kis.korea.investor.schemas import (
     InvestorFlowPhase,
     InvestorFlowProbeOptions,
+    InvestorFlowRequestHeaders,
     InvestorFlowScope,
     InvestorFlowTrId,
     InvestorFlowVenue,
 )
+from tests.kis.korea.investor.fixtures import settings
 
 
 def test_build_intraday_requests_distinguishes_stock_scope_from_kospi_krx() -> None:
@@ -15,7 +17,7 @@ def test_build_intraday_requests_distinguishes_stock_scope_from_kospi_krx() -> N
 
     requests = build_requests(options)
 
-    assert [(item.target, item.venue, item.tr_id, item.params) for item in requests] == [
+    assert [(item.target, item.venue, item.tr_id, item.params.model_dump(mode="json")) for item in requests] == [
         (
             "005930",
             InvestorFlowVenue.UNSPECIFIED,
@@ -77,7 +79,7 @@ def test_build_final_requests_separates_krx_and_nxt_for_each_stock() -> None:
 
     requests = build_requests(options)
 
-    assert [(item.target, item.venue, item.params) for item in requests] == [
+    assert [(item.target, item.venue, item.params.model_dump(mode="json")) for item in requests] == [
         (
             "005930",
             InvestorFlowVenue.KRX,
@@ -135,3 +137,31 @@ def test_build_final_requests_separates_krx_and_nxt_for_each_stock() -> None:
             },
         ),
     ]
+
+
+def test_build_headers_returns_typed_wire_headers() -> None:
+    request = build_requests(
+        InvestorFlowProbeOptions(
+            phase=InvestorFlowPhase.INTRADAY,
+            scope=InvestorFlowScope.STOCK,
+        )
+    )[0]
+
+    headers = build_headers(settings(), "access-token", request)
+
+    assert isinstance(headers, InvestorFlowRequestHeaders)
+    assert headers.model_dump(mode="json") == {
+        "Content-Type": "application/json",
+        "Accept": "text/plain",
+        "charset": "UTF-8",
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
+        ),
+        "authorization": "Bearer access-token",
+        "appkey": "app-key",
+        "appsecret": "app-secret",
+        "tr_id": "HHPTJ04160200",
+        "custtype": "P",
+        "tr_cont": "",
+    }

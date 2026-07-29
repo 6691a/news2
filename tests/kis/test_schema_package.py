@@ -7,6 +7,7 @@ from app.kis.exceptions import (
 from app.kis.schemas import (
     KISAuthRequest,
     KISTrType,
+    KISWebSocketPingPongMessage,
     KISWebSocketSubscriptionResponse,
     KISWebSocketSubscriptionBody,
     KISWebSocketSubscriptionHeader,
@@ -15,12 +16,14 @@ from app.kis.schemas import (
 )
 from app.kis.schemas.auth import KISAuthRequest as AuthRequestFromModule
 from app.kis.schemas.websocket import (
+    KISWebSocketPingPongMessage as PingPongMessageFromModule,
     KISWebSocketSubscriptionMessage as MessageFromModule,
 )
 
 
 def test_schema_package_reexports_public_models() -> None:
     assert KISAuthRequest is AuthRequestFromModule
+    assert KISWebSocketPingPongMessage is PingPongMessageFromModule
     assert KISWebSocketSubscriptionMessage is MessageFromModule
 
 

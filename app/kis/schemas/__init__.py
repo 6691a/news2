@@ -11,6 +11,8 @@ from app.kis.schemas.auth import (
 from app.kis.schemas.common import KISBaseModel
 from app.kis.schemas.websocket import (
     KISTrType,
+    KISWebSocketPingPongHeader,
+    KISWebSocketPingPongMessage,
     KISWebSocketSubscription,
     KISWebSocketSubscriptionBody,
     KISWebSocketSubscriptionHeader,
@@ -30,6 +32,8 @@ __all__ = [
     "KISBaseAuthTokenHeader",
     "KISBaseModel",
     "KISTrType",
+    "KISWebSocketPingPongHeader",
+    "KISWebSocketPingPongMessage",
     "KISWebSocketSubscription",
     "KISWebSocketSubscriptionBody",
     "KISWebSocketSubscriptionHeader",
