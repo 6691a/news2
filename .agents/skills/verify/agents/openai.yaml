@@ -1,4 +1,0 @@
-interface:
-  display_name: "Verify"
-  short_description: "완료 조건만으로 구현을 판정하고 검증 리포트를 작성"
-  default_prompt: "Use $verify with the plan slug to verify the implementation without fixing it."
