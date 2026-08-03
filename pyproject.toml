@@ -35,6 +35,19 @@ pythonpath = ["."]
 [tool.ruff]
 line-length = 120
 
+[tool.ruff.lint]
+# 기본값(E4/E7/E9/F)에 CLAUDE.md가 요구하는 docstring·타입 힌트 규칙을 더한다.
+# D 전체를 켜면 모듈·클래스 docstring(D100/D101)까지 요구해 기존 코드와 충돌하고,
+# docstring 뒤 빈 줄을 금지하는 D202는 이 저장소의 일관된 스타일과 정면으로 부딪힌다.
+# 그래서 규칙 문서에 실제로 적힌 항목만 고른다.
+select = ["E4", "E7", "E9", "F", "ANN", "D102", "D103", "D107", "D205", "D400", "D415", "D417"]
+
+[tool.ruff.lint.per-file-ignores]
+# 테스트 함수는 이름이 곧 설명이라 docstring을 요구하지 않는다.
+"tests/**" = ["D102", "D103", "D107", "D400", "D415", "ANN202"]
+# alembic 리비전 파일의 첫 줄은 템플릿(script.py.mako)이 생성한다.
+"alembic/**" = ["D103", "D400", "D415"]
+
 [tool.pyrefly]
 preset = "basic"
 project_excludes = ["test.ipynb"]
