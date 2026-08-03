@@ -1,8 +1,9 @@
 """국내 투자자 수급 수집·저장 엔트리포인트.
 
-python -m app.kis.korea.investor               # 장중 가집계
-python -m app.kis.korea.investor 2026-07-30    # 그 날짜의 마감 확정치
-python -m app.kis.korea.investor backfill      # 기준 시작일(2025-01-01)부터 오늘까지 확정치
+python -m app.kis.korea.investor                          # 장중 가집계
+python -m app.kis.korea.investor 2026-07-30               # 그 날짜의 마감 확정치
+python -m app.kis.korea.investor backfill                 # 기준 시작일(2025-01-01)부터 오늘까지
+python -m app.kis.korea.investor 2026-06-01 2026-07-31    # 지정한 구간만 마감 확정치
 """
 
 import asyncio
@@ -35,13 +36,15 @@ def build_options(argv: Sequence[str]) -> InvestorFlowProbeOptions:
 
     Args:
         argv: 프로그램 이름을 제외한 명령행 인자.
+            `[backfill] | [date] | [start end]` 형식이며 전부 생략할 수 있다.
 
     Returns:
-        인자가 없으면 장중 가집계 옵션, `YYYY-MM-DD`를 주면 그 날짜의 마감 확정치 옵션,
-        `backfill`이면 기준 시작일부터 오늘까지의 마감 확정치 옵션.
+        인자가 없으면 장중 가집계 옵션, `YYYY-MM-DD` 하나면 그 날짜의 마감 확정치 옵션,
+        날짜 둘이면 그 구간의 마감 확정치 옵션, `backfill`이면 기준 시작일부터 오늘까지의
+        마감 확정치 옵션.
 
     Raises:
-        ValueError: 날짜 인자가 `backfill`도 ISO 8601 형식도 아닌 경우.
+        ValueError: 날짜 인자가 `backfill`도 ISO 8601 형식도 아니거나, 인자가 너무 많은 경우.
     """
 
     if not argv:
@@ -52,6 +55,18 @@ def build_options(argv: Sequence[str]) -> InvestorFlowProbeOptions:
             phase=InvestorFlowPhase.FINAL,
             start_date=BACKFILL_START,
             trade_date=utc_now().astimezone(KST).date(),
+        )
+
+    if len(argv) > 2:
+        raise ValueError("period takes start and end (YYYY-MM-DD)")
+
+    if len(argv) == 2:
+        # 구간을 직접 주면 기준 시작일 대신 그 구간만 받는다. 거래일마다 TR 5건이
+        # 나가므로 구간을 좁히면 호출 수도 그만큼 줄어든다.
+        return InvestorFlowProbeOptions(
+            phase=InvestorFlowPhase.FINAL,
+            start_date=date.fromisoformat(argv[0]),
+            trade_date=date.fromisoformat(argv[1]),
         )
 
     return InvestorFlowProbeOptions(

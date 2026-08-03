@@ -209,9 +209,24 @@ uv run python -m app.ohlcv korea backfill          # 국내 확정 일봉
 uv run python -m app.ohlcv overseas backfill       # 해외 확정 일봉
 uv run python -m app.macro.us.treasury backfill    # 미국채 10Y 확정 수익률(FRED)
 uv run python -m app.kis.korea.investor backfill   # 국내 투자자 수급 확정치
-
-uv run python -m app.ohlcv overseas 2025-06-01     # 시작일만 지정 — 오늘까지
 ```
+
+기준 시작일 전체가 아니라 **구간만** 받으려면 날짜 두 개를 준다. 세 패키지가 같은
+형식(`<시작일> <종료일>`)을 쓴다.
+
+```
+uv run python -m app.ohlcv korea 2026-06-01 2026-07-31
+uv run python -m app.macro.us.treasury 2026-06-01 2026-07-31
+uv run python -m app.kis.korea.investor 2026-06-01 2026-07-31
+
+uv run python -m app.ohlcv overseas 2025-06-01     # 일봉만: 시작일만 지정 — 오늘까지
+uv run python -m app.macro.us.treasury 2026-07-30  # 국채: 날짜 하나는 그 날 확정치 1건
+uv run python -m app.kis.korea.investor 2026-07-30 # 수급: 날짜 하나는 그 날 확정치 1건
+```
+
+날짜를 하나만 주는 형태는 패키지마다 뜻이 다르다. 일봉은 "그날부터 오늘까지"이고,
+국채·수급은 "그 하루치"다 — 두 패키지의 확정치는 하루 단위 조회가 원래 운영 경로라
+그쪽을 기본으로 둔다.
 
 | 패키지 | 호출 방식 | 소요 |
 |---|---|---|
@@ -283,6 +298,7 @@ REST는 접근토큰과 표준 `appkey`·`appsecret`·`tr_id` 헤더를 사용�
 | 뉴스 | 5~15분 | 실시간 대응의 실질 병목 지점 |
 | 공시 | 30분~1시간 | |
 | 지수/선물/환율 | 15분 | USD/JPY, JPY/KRW 포함 |
+| KOSPI200 지수·선물 | 주간 장중 15분 + 마감 후 확정 일봉 1회, 야간(18:00~익일 06:00) 별도 | KRX 파생 야간시장은 **다음 거래일(T+1) 귀속** — 세션은 종목코드가 아니라 봉 시각으로 가른다. 설계·미확인 항목은 [kospi200.md](kospi200.md) |
 | 원자재 선물 | COMEX·NYMEX 거래 세션 중 WebSocket 상시 + 마감 후 확정 일봉 1회 | `GC`·`SI`·`HG`·`CL`. 장 개폐 시각은 수신값 `mrkt_open_*`·`mrkt_close_*` 기준. 만기·휴일·정기 중단은 무수신 경고 대상에서 제외 |
 | 채권 금리 | 장중 15분 폴링(`^TNX`·`ZN=F` 1분봉) + 미 영업일 1회 확정(FRED `DGS10`) | 금리 레벨의 소스 오브 트루스는 FRED 확정치. ZN 선물은 아시아 세션 방향성 신호 전용 |
 | 수급 동향 (현물/선물) | 장중 잠정치 30분~1시간, 마감 후 확정치 1회 | 장중 데이터는 **잠정치**(provisional) 플래그로 구분 저장. 덮어쓰지 않고 `snapshot_ts`별로 이력 축적 |

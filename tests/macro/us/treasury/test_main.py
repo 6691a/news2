@@ -41,6 +41,26 @@ def test_build_options_backfill_runs_from_baseline_to_today() -> None:
     assert options.series is TreasurySeries.US_10Y
 
 
+def test_build_options_reads_explicit_period() -> None:
+    options = build_options(["2026-06-01", "2026-07-31"])
+
+    # 구간을 직접 주면 단일일 확정(FINAL)이 아니라 구간 백필 경로를 탄다.
+    assert options.phase is TreasuryPhase.BACKFILL
+    assert options.start_date == date(2026, 6, 1)
+    assert options.target_date == date(2026, 7, 31)
+    assert options.series is TreasurySeries.US_10Y
+
+
+def test_build_options_rejects_reversed_period() -> None:
+    with pytest.raises(ValueError, match="must not be after"):
+        build_options(["2026-07-31", "2026-06-01"])
+
+
+def test_build_options_rejects_extra_arguments() -> None:
+    with pytest.raises(ValueError, match="period takes start and end"):
+        build_options(["2026-06-01", "2026-07-31", "2026-08-01"])
+
+
 def test_build_options_rejects_unknown_argument() -> None:
     with pytest.raises(ValueError):
         build_options(["yesterday"])

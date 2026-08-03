@@ -41,6 +41,27 @@ def test_build_options_backfill_runs_from_baseline_to_today() -> None:
     assert options.trade_dates()[0] == BACKFILL_START
 
 
+def test_build_options_reads_explicit_period() -> None:
+    options = build_options(["2026-06-01", "2026-07-31"])
+
+    assert options.phase is InvestorFlowPhase.FINAL
+    assert options.start_date == date(2026, 6, 1)
+    assert options.trade_date == date(2026, 7, 31)
+    # 6~7월 평일 45일. 주말만 미리 거르고 공휴일은 달력이 없어 그대로 호출한다(0행으로 끝난다).
+    assert len(options.trade_dates()) == 45
+    assert options.trade_dates()[0] == date(2026, 6, 1)
+
+
+def test_build_options_rejects_reversed_period() -> None:
+    with pytest.raises(ValueError, match="must not be after"):
+        build_options(["2026-07-31", "2026-06-01"])
+
+
+def test_build_options_rejects_extra_arguments() -> None:
+    with pytest.raises(ValueError, match="period takes start and end"):
+        build_options(["2026-06-01", "2026-07-31", "2026-08-01"])
+
+
 def test_build_options_rejects_unknown_argument() -> None:
     with pytest.raises(ValueError):
         build_options(["yesterday"])

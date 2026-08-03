@@ -1,9 +1,10 @@
 """미국 국채 수익률·국채선물 수집·저장 엔트리포인트.
 
-python -m app.macro.us.treasury               # 10년물 장중 1분봉
-python -m app.macro.us.treasury ZN            # 국채선물 장중 1분봉
-python -m app.macro.us.treasury 2026-07-30    # 그 날짜의 확정 수익률
-python -m app.macro.us.treasury backfill      # 기준 시작일(2025-01-01)부터 오늘까지 확정 수익률
+python -m app.macro.us.treasury                          # 10년물 장중 1분봉
+python -m app.macro.us.treasury ZN                       # 국채선물 장중 1분봉
+python -m app.macro.us.treasury 2026-07-30               # 그 날짜의 확정 수익률
+python -m app.macro.us.treasury backfill                 # 기준 시작일(2025-01-01)부터 오늘까지
+python -m app.macro.us.treasury 2026-06-01 2026-07-31    # 지정한 구간만 확정 수익률
 
 장중 1분봉에는 backfill 경로가 없다. Yahoo가 1분봉을 30일까지만 보관해 과거를 채울 수
 없고, 가동 시작 시점이 곧 그 그레인 데이터의 시작이다. 조사하고 없는 것이지 빠뜨린 게 아니다.
@@ -38,14 +39,17 @@ def build_options(argv: Sequence[str]) -> TreasuryProbeOptions:
 
     Args:
         argv: 프로그램 이름을 제외한 명령행 인자.
+            `[series] | [backfill] | [date] | [start end]` 형식이며 전부 생략할 수 있다.
 
     Returns:
         인자가 없으면 10년물 수익률 장중 수집 옵션, 계열 값(`US10Y`·`ZN`)을 주면 그
-        계열의 장중 수집 옵션, `YYYY-MM-DD`를 주면 그 날짜의 확정치 수집 옵션,
-        `backfill`이면 기준 시작일부터 오늘까지의 확정치 수집 옵션.
+        계열의 장중 수집 옵션, `YYYY-MM-DD` 하나면 그 날짜의 확정치 수집 옵션,
+        날짜 둘이면 그 구간의 확정치 수집 옵션, `backfill`이면 기준 시작일부터
+        오늘까지의 확정치 수집 옵션.
 
     Raises:
-        ValueError: 인자가 계열 값도 `backfill`도 ISO 8601 날짜도 아닌 경우.
+        ValueError: 인자가 계열 값도 `backfill`도 ISO 8601 날짜도 아니거나, 인자가 너무
+            많은 경우.
     """
 
     if not argv:
@@ -64,6 +68,18 @@ def build_options(argv: Sequence[str]) -> TreasuryProbeOptions:
             phase=TreasuryPhase.BACKFILL,
             start_date=BACKFILL_START,
             target_date=utc_now().astimezone(ET).date(),
+        )
+
+    if len(argv) > 2:
+        raise ValueError("period takes start and end (YYYY-MM-DD)")
+
+    if len(argv) == 2:
+        # 구간을 직접 주면 기준 시작일 대신 그 구간만 받는다. backfill과 같은 경로를
+        # 타므로 결측(휴장·미공표)은 예외 없이 건너뛴다.
+        return TreasuryProbeOptions(
+            phase=TreasuryPhase.BACKFILL,
+            start_date=date.fromisoformat(argument),
+            target_date=date.fromisoformat(argv[1]),
         )
 
     return TreasuryProbeOptions(
