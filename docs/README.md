@@ -862,7 +862,8 @@ CREATE TABLE signal_outcomes (
 ### Phase 1 — 배치 파이프라인 (4~6주)
 
 - [x] 관심 종목 확정 — 총 9개 (§1.4): 삼성전자, SK하이닉스, AAPL, GOOGL, MSFT, META, NVDA, QQQ, SPY
-- [ ] `instruments` 테이블 등록 + 엔티티 별칭(aliases) 입력
+- [x] `instruments` 테이블 등록 (추적 9종목 + KOSPI + 매크로 지표 — seed 마이그레이션 3건)
+- [ ] 엔티티 별칭(aliases) 입력
 - [x] KIS 인증 + 웹소켓 실시간 시세 수신 (국내/해외 체결·호가 DTO 파싱까지)
 - [x] KIS 실시간 tick 저장 (국내·해외 체결/호가 테이블, §4.2)
 - [x] 확정 일봉 수집·저장 (`ohlcv`, 국내 KIS + 해외 yfinance, 백필 CLI 포함)

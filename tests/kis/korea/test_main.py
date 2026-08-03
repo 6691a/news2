@@ -4,9 +4,10 @@ from datetime import datetime
 import pytest
 from dependency_injector import providers
 from sqlalchemy.exc import SQLAlchemyError
+from structlog.testing import capture_logs
 
 from app.core.containers import container
-from app.instruments.models import Instrument, Market
+from app.instruments.models import Instrument, InstrumentKind, Market
 from app.kis.korea.__main__ import main
 from app.kis.korea.schemas import (
     KISKoreaOrderbook,
@@ -52,13 +53,48 @@ class FakeInstrumentRepository:
     """테스트용 추적 종목 목록을 반환한다."""
 
     async def list_watched(self) -> list[Instrument]:
-        """국내 두 종목과 필터링할 해외 한 종목을 반환한다."""
+        """국내 두 종목과 걸러내야 할 해외 종목·국내 지수를 반환한다."""
 
         return [
-            Instrument(ticker="005930", market=Market.KRX, name="삼성전자"),
-            Instrument(ticker="000660", market=Market.KRX, name="SK하이닉스"),
-            Instrument(ticker="AAPL", market=Market.NASDAQ, name="Apple"),
+            Instrument(ticker="005930", market=Market.KRX, name="삼성전자", kind=InstrumentKind.EQUITY),
+            Instrument(ticker="000660", market=Market.KRX, name="SK하이닉스", kind=InstrumentKind.EQUITY),
+            Instrument(ticker="AAPL", market=Market.NASDAQ, name="Apple", kind=InstrumentKind.EQUITY),
+            # KOSPI는 시장이 KRX여도 체결가가 없어 실시간 TR로 구독하면 KIS가 거절한다.
+            Instrument(ticker="KOSPI", market=Market.KRX, name="코스피", kind=InstrumentKind.INDEX),
         ]
+
+
+@pytest.mark.asyncio
+async def test_main_skips_index_instruments_and_reports_subscription_counts() -> None:
+    subscriptions: list[KISKoreaSubscription] = []
+    database = FakeDatabase()
+
+    class SilentQuote:
+        async def subscribe(self, subscription: KISKoreaSubscription) -> None:
+            subscriptions.append(subscription)
+
+        async def run(self) -> None:
+            return None
+
+        async def stream(self) -> AsyncIterator[KISKoreaTrade | KISKoreaOrderbook]:
+            return
+            yield  # pragma: no cover - 빈 스트림을 만들기 위한 자리다
+
+    with (
+        container.korea_websocket_quote.override(providers.Object(SilentQuote())),
+        container.korea_tick_repository.override(providers.Object(FakeRepository())),
+        container.instrument_repository.override(providers.Object(FakeInstrumentRepository())),
+        container.database.override(providers.Object(database)),
+        capture_logs() as logs,
+    ):
+        await main()
+
+    # 지수는 체결가가 없어 구독하면 KIS가 거절하고 프로세스가 죽는다.
+    assert "KOSPI" not in {subscription.code for subscription in subscriptions}
+    ready = [entry for entry in logs if entry["event"] == "kis_tick_subscriptions_ready"]
+    assert len(ready) == 1
+    assert ready[0]["watched"] == 4
+    assert ready[0]["subscribed"] == 2
 
 
 @pytest.mark.asyncio
