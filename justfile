@@ -1,4 +1,5 @@
-# 사용 가능한 명령을 표시한다.
+set shell := ["powershell", "-NoLogo", "-NoProfile", "-Command"]
+
 default:
     @just --list
 
