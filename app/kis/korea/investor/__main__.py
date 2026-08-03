@@ -102,6 +102,7 @@ async def main(
 
         responses = 0
         saved = 0
+        saved_dates: list[date] = []
         async with httpx.AsyncClient() as client:
             for index, unit in enumerate(units):
                 # 거래일이 바뀔 때도 KIS 초당 거래건수 제한을 지켜야 한다. 서비스가 TR
@@ -110,14 +111,23 @@ async def main(
                     await asyncio.sleep(KIS_REQUEST_INTERVAL_SECONDS)
                 results = await service.collect_results(unit, client)
                 responses += len(results)
-                saved += await repository.save(results, unit, snapshot_ts)
+                unit_saved = await repository.save(results, unit, snapshot_ts)
+                saved += unit_saved
+                if unit_saved:
+                    # repository와 같은 방식으로 거래일을 정한다. 장중 옵션에는 날짜가 없다.
+                    saved_dates.append(unit.trade_date or snapshot_ts.astimezone(KST).date())
 
+        # units가 오름차순이라 saved_dates도 정렬 상태다(trade_dates()가 보장한다).
         logger.info(
             "investor_flow_saved",
             phase=options.phase.value,
             trade_dates=len(units),
             responses=responses,
             saved=saved,
+            # 요청 구간이 아니라 실제로 행이 담긴 구간이다. 소스가 기준 시작일부터
+            # 주지 못하거나 중간이 통째로 비어도 여기서만 드러난다.
+            first_date=saved_dates[0].isoformat() if saved_dates else "",
+            last_date=saved_dates[-1].isoformat() if saved_dates else "",
             snapshot_ts=snapshot_ts.isoformat(),
         )
     finally:
