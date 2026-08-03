@@ -29,11 +29,16 @@ class KISOverseasSubscription(KISBaseModel):
 
     def to_websocket_subscription(self) -> KISWebSocketSubscription:
         """미국주식 구독을 공용 웹소켓 구독으로 변환한다.
+
         tr_key 규칙: <티어><거래소코드><종목코드>  예) D + NAS + GOOGL = DNASGOOGL
+
         - 티어 "D": 무료 지연시세 (그래서 HDFSCNT0 = 실시간'지연'체결가).
-        유료 실시간은 "R" 을 쓴다.
+          유료 실시간은 "R" 을 쓴다.
         - 거래소코드: NAS(나스닥)/NYS(뉴욕)/AMS(아멕스) 등 3자리.
         - 종목코드: AAPL, GOOGL 처럼 미국 티커.
+
+        Returns:
+            tr_key가 채워진 공용 웹소켓 구독.
         """
 
         return KISWebSocketSubscription(
