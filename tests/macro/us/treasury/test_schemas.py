@@ -270,11 +270,22 @@ def test_parse_fred_observations_skips_missing_values_and_sorts() -> None:
         }
     )
 
-    observations = parse_fred_observations(TreasurySeries.US_10Y, envelope)
+    with capture_logs() as logs:
+        observations = parse_fred_observations(TreasurySeries.US_10Y, envelope)
 
     # 휴장일(".")은 빠지고, 실제로 값이 있는 첫 날짜부터 오름차순으로 담긴다.
     assert [item.observation_date for item in observations] == [date(2025, 1, 2), date(2025, 1, 3)]
     assert observations[0].yield_pct == Decimal("4.56")
+
+    dropped = [entry for entry in logs if entry["event"] == "fred_observations_missing_dropped"]
+    assert len(dropped) == 1
+    assert dropped[0]["log_level"] == "warning"
+    assert (dropped[0]["received"], dropped[0]["dropped"]) == (3, 1)
+
+    parsed = [entry for entry in logs if entry["event"] == "fred_observations_parsed"]
+    assert (parsed[0]["received"], parsed[0]["parsed"]) == (3, 2)
+    # 요청 구간이 아니라 실제로 값이 담긴 구간이다. 시리즈가 늦게 시작하면 여기서만 드러난다.
+    assert (parsed[0]["first_date"], parsed[0]["last_date"]) == ("2025-01-02", "2025-01-03")
 
 
 def test_parse_fred_observations_returns_empty_when_all_missing() -> None:
@@ -292,4 +303,21 @@ def test_parse_fred_observations_returns_empty_when_all_missing() -> None:
         }
     )
 
-    assert parse_fred_observations(TreasurySeries.US_10Y, envelope) == ()
+    with capture_logs() as logs:
+        assert parse_fred_observations(TreasurySeries.US_10Y, envelope) == ()
+
+    # 구간 전체가 결측인 상태. 백필은 재실행이 없으므로 반드시 드러나야 한다.
+    dropped = [entry for entry in logs if entry["event"] == "fred_observations_missing_dropped"]
+    assert (dropped[0]["log_level"], dropped[0]["received"], dropped[0]["dropped"]) == ("warning", 1, 1)
+    parsed = [entry for entry in logs if entry["event"] == "fred_observations_parsed"]
+    assert (parsed[0]["parsed"], parsed[0]["first_date"]) == (0, "")
+
+
+def test_parse_fred_observations_does_not_warn_when_nothing_is_dropped() -> None:
+    envelope = FredObservationsEnvelope.model_validate(FRED_DGS10_RESPONSE)
+
+    with capture_logs() as logs:
+        observations = parse_fred_observations(TreasurySeries.US_10Y, envelope)
+
+    assert len(observations) == 1
+    assert not [entry for entry in logs if entry["event"] == "fred_observations_missing_dropped"]

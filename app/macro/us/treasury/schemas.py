@@ -306,9 +306,10 @@ def parse_fred_observations(
 
     Returns:
         날짜 오름차순의 확정 수익률 목록. 전부 결측이면 빈 튜플.
+        건너뛴 결측이 있으면 건수를 로그로 남긴다.
     """
 
-    return tuple(
+    observations = tuple(
         TreasuryFinalObservation(
             series=series,
             observation_date=observation.date,
@@ -317,3 +318,23 @@ def parse_fred_observations(
         for observation in sorted(response.observations, key=lambda item: item.date)
         if observation.value != FRED_MISSING_VALUE
     )
+
+    dropped = len(response.observations) - len(observations)
+    if dropped:
+        # 휴장일과 시리즈 시작 이전은 정상적인 결측이다. 그래도 건수를 남겨야
+        # "구간 전체가 결측"인 사고와 구분된다. 백필은 한 번 돌고 끝이라 더 그렇다.
+        logger.warning(
+            "fred_observations_missing_dropped",
+            series=series.value,
+            received=len(response.observations),
+            dropped=dropped,
+        )
+    logger.info(
+        "fred_observations_parsed",
+        series=series.value,
+        received=len(response.observations),
+        parsed=len(observations),
+        first_date=observations[0].observation_date.isoformat() if observations else "",
+        last_date=observations[-1].observation_date.isoformat() if observations else "",
+    )
+    return observations
