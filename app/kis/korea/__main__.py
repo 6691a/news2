@@ -48,11 +48,13 @@ async def main(
     try:
         watched_instruments = await instrument_repository.list_watched()
         subscribed = 0
+        skipped = 0
         for instrument in watched_instruments:
             # 지수(KOSPI)는 시장이 KRX여도 체결가가 없어 실시간 체결·호가 TR로 받을 수 없다.
             # 구독을 시도하면 KIS가 거절하고 그 예외가 이 프로세스를 죽인다. 일봉은
             # app.ohlcv가 Yahoo 지수 심볼로 따로 받는다.
             if instrument.market is not Market.KRX or instrument.kind is InstrumentKind.INDEX:
+                skipped += 1
                 continue
 
             for tr_id in (
@@ -73,6 +75,7 @@ async def main(
             market="korea",
             watched=len(watched_instruments),
             subscribed=subscribed,
+            skipped=skipped,
         )
 
         async with asyncio.TaskGroup() as task_group:

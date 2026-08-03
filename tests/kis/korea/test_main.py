@@ -93,8 +93,8 @@ async def test_main_skips_index_instruments_and_reports_subscription_counts() ->
     assert "KOSPI" not in {subscription.code for subscription in subscriptions}
     ready = [entry for entry in logs if entry["event"] == "kis_tick_subscriptions_ready"]
     assert len(ready) == 1
-    assert ready[0]["watched"] == 4
-    assert ready[0]["subscribed"] == 2
+    # 종목 4개 중 2개 구독, 2개 제외(해외 1 + 국내 지수 1).
+    assert (ready[0]["watched"], ready[0]["subscribed"], ready[0]["skipped"]) == (4, 2, 2)
 
 
 @pytest.mark.asyncio
