@@ -49,6 +49,7 @@ temp/
 # IDE/editor files
 .idea/
 .vscode/
+.worktrees/
 *.swp
 *.swo
 *~

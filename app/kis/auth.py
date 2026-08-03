@@ -31,7 +31,14 @@ class KISAuth:
         REMOVE_AUTH_TOKEN = "/oauth2/revokeP"
         WEBSOCKET_TOKEN = "/oauth2/Approval"
 
-    def __init__(self, settings: Settings, redis: Redis):
+    def __init__(self, settings: Settings, redis: Redis) -> None:
+        """KIS 도메인 설정과 토큰 캐시 연결을 주입받는다.
+
+        Args:
+            settings: 실전·모의 도메인과 앱키를 담은 설정.
+            redis: 발급한 접근 토큰을 캐시할 Redis 연결.
+        """
+
         self.kis_virtual = settings.kis_virtual
         self.app_key = settings.kis_app_key
         self.app_secret = settings.kis_app_secret
@@ -55,20 +62,15 @@ class KISAuth:
         return f"kis:auth:token:{env}:{app_key_digest}"
 
     def _get_domain(self) -> str:
-        """
-        가상 투자 여부에 따라 REST 도메인을 반환한다.
-
-        `kis_virtual` 속성이 `True`이면 가상 도메인 값을, 그렇지 않으면
-        실전 도메인 값을 반환한다.
+        """투자 환경에 맞는 REST 도메인을 반환한다.
 
         Returns:
-            str: (REST 도메인)
+            `kis_virtual`이면 모의투자 도메인, 아니면 실전 도메인.
         """
 
         if self.kis_virtual:
             return self.virtual_rest_domain
-        else:
-            return self.rest_domain
+        return self.rest_domain
 
     async def get_auth_token(self) -> KISAuthTokenResponse:
         """캐시된 토큰이 있으면 재사용하고, 없을 때만 새로 발급한다.

@@ -8,8 +8,11 @@ from typing import Self
 import pandas as pd
 from pydantic import AwareDatetime, BaseModel, model_validator
 
+from app.core.logging import get_logger
 from app.macro.us.treasury.exceptions import TreasuryDataUnavailableError
 
+
+logger = get_logger(__name__)
 
 # 1분봉의 길이. 봉 시작 시각 + 이 간격이 아직 오지 않았으면 값이 더 변한다.
 BAR_INTERVAL = timedelta(minutes=1)
@@ -197,7 +200,7 @@ def parse_history_frame(
         as_of: 파싱 기준 시각(timezone-aware). 아직 끝나지 않은 봉을 걸러낼 때 쓴다.
 
     Returns:
-        완료된 봉만 담은 수집 결과.
+        완료된 봉만 담은 수집 결과. 버린 행이 있으면 건수를 로그로 남긴다.
 
     Raises:
         ValueError: OHLC 열이 빠졌거나 인덱스가 timezone-aware가 아닌 경우.
@@ -210,15 +213,19 @@ def parse_history_frame(
         raise ValueError("yfinance history index must be timezone-aware")
 
     bars: list[IntradayBar] = []
+    missing_close = 0
+    unsettled = 0
     for event_ts, row in frame.iterrows():
         close = _decimal_or_none(row["Close"])
         if close is None:
             # 거래가 없던 분은 yfinance가 NaN 행으로 돌려줄 수 있다.
+            missing_close += 1
             continue
 
         utc_event_ts = event_ts.to_pydatetime().astimezone(UTC)
         if utc_event_ts + BAR_INTERVAL > as_of:
             # 진행 중인 봉은 값이 아직 변한다. 저장하면 다음 회차가 갱신하지 못한다.
+            unsettled += 1
             continue
 
         bars.append(
@@ -231,6 +238,21 @@ def parse_history_frame(
             )
         )
 
+    if missing_close:
+        logger.warning(
+            "treasury_intraday_rows_without_close",
+            series=series.value,
+            received=len(frame.index),
+            dropped=missing_close,
+        )
+    # 응답 형식이 바뀌어 멀쩡한 봉을 버리기 시작해도 이 건수만 보면 드러난다.
+    logger.info(
+        "treasury_intraday_parsed",
+        series=series.value,
+        received=len(frame.index),
+        parsed=len(bars),
+        skipped_unsettled=unsettled,
+    )
     return TreasuryIntradayResult(series=series, bars=tuple(bars))
 
 
@@ -284,9 +306,10 @@ def parse_fred_observations(
 
     Returns:
         날짜 오름차순의 확정 수익률 목록. 전부 결측이면 빈 튜플.
+        건너뛴 결측이 있으면 건수를 로그로 남긴다.
     """
 
-    return tuple(
+    observations = tuple(
         TreasuryFinalObservation(
             series=series,
             observation_date=observation.date,
@@ -295,3 +318,23 @@ def parse_fred_observations(
         for observation in sorted(response.observations, key=lambda item: item.date)
         if observation.value != FRED_MISSING_VALUE
     )
+
+    dropped = len(response.observations) - len(observations)
+    if dropped:
+        # 휴장일과 시리즈 시작 이전은 정상적인 결측이다. 그래도 건수를 남겨야
+        # "구간 전체가 결측"인 사고와 구분된다. 백필은 한 번 돌고 끝이라 더 그렇다.
+        logger.warning(
+            "fred_observations_missing_dropped",
+            series=series.value,
+            received=len(response.observations),
+            dropped=dropped,
+        )
+    logger.info(
+        "fred_observations_parsed",
+        series=series.value,
+        received=len(response.observations),
+        parsed=len(observations),
+        first_date=observations[0].observation_date.isoformat() if observations else "",
+        last_date=observations[-1].observation_date.isoformat() if observations else "",
+    )
+    return observations

@@ -4,6 +4,7 @@ from decimal import Decimal
 
 import pytest
 from pydantic import ValidationError
+from structlog.testing import capture_logs
 
 from app.macro.us.treasury.exceptions import TreasuryDataUnavailableError
 from app.macro.us.treasury.schemas import (
@@ -96,6 +97,48 @@ def test_parse_history_frame_drops_the_bar_still_in_progress() -> None:
         datetime(2026, 7, 27, 12, 20, tzinfo=UTC),
         datetime(2026, 7, 27, 12, 21, tzinfo=UTC),
     ]
+
+
+def test_parse_history_frame_logs_dropped_and_parsed_counts() -> None:
+    with capture_logs() as logs:
+        result = parse_history_frame(TreasurySeries.ZN_FUTURE, ZN_HISTORY_FRAME, as_of=ZN_AS_OF)
+
+    dropped = [entry for entry in logs if entry["event"] == "treasury_intraday_rows_without_close"]
+    assert len(dropped) == 1
+    assert dropped[0]["log_level"] == "warning"
+    assert dropped[0]["dropped"] == 1
+
+    parsed = [entry for entry in logs if entry["event"] == "treasury_intraday_parsed"]
+    assert len(parsed) == 1
+    assert parsed[0]["series"] == "ZN"
+    # 버린 행까지 더하면 응답 건수가 나와야 한다. 하나라도 어긋나면 조용히 사라진 행이 있다.
+    assert parsed[0]["received"] == len(ZN_HISTORY_FRAME.index)
+    assert parsed[0]["parsed"] + parsed[0]["skipped_unsettled"] + dropped[0]["dropped"] == parsed[0]["received"]
+    assert parsed[0]["parsed"] == len(result.bars)
+
+
+def test_parse_history_frame_logs_unsettled_bars_without_warning() -> None:
+    # 12:22 봉은 아직 진행 중이다. 정상 동작이라 warning이 아니라 건수로만 남는다.
+    as_of = datetime(2026, 7, 27, 12, 22, 30, tzinfo=UTC)
+
+    with capture_logs() as logs:
+        parse_history_frame(TreasurySeries.US_10Y, TNX_HISTORY_FRAME, as_of=as_of)
+
+    assert not [entry for entry in logs if entry["event"] == "treasury_intraday_rows_without_close"]
+    parsed = [entry for entry in logs if entry["event"] == "treasury_intraday_parsed"]
+    assert (parsed[0]["received"], parsed[0]["parsed"], parsed[0]["skipped_unsettled"]) == (3, 2, 1)
+
+
+def test_parse_history_frame_logs_zero_parsed_when_everything_is_filtered() -> None:
+    # 응답은 왔는데 전부 걸러진 상태. 서비스는 frame.empty가 아니라 예외를 올리지 않는다.
+    as_of = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)
+
+    with capture_logs() as logs:
+        result = parse_history_frame(TreasurySeries.US_10Y, TNX_HISTORY_FRAME, as_of=as_of)
+
+    assert result.bars == ()
+    parsed = [entry for entry in logs if entry["event"] == "treasury_intraday_parsed"]
+    assert (parsed[0]["received"], parsed[0]["parsed"]) == (3, 0)
 
 
 def test_parse_history_frame_rejects_naive_index() -> None:
@@ -227,11 +270,22 @@ def test_parse_fred_observations_skips_missing_values_and_sorts() -> None:
         }
     )
 
-    observations = parse_fred_observations(TreasurySeries.US_10Y, envelope)
+    with capture_logs() as logs:
+        observations = parse_fred_observations(TreasurySeries.US_10Y, envelope)
 
     # 휴장일(".")은 빠지고, 실제로 값이 있는 첫 날짜부터 오름차순으로 담긴다.
     assert [item.observation_date for item in observations] == [date(2025, 1, 2), date(2025, 1, 3)]
     assert observations[0].yield_pct == Decimal("4.56")
+
+    dropped = [entry for entry in logs if entry["event"] == "fred_observations_missing_dropped"]
+    assert len(dropped) == 1
+    assert dropped[0]["log_level"] == "warning"
+    assert (dropped[0]["received"], dropped[0]["dropped"]) == (3, 1)
+
+    parsed = [entry for entry in logs if entry["event"] == "fred_observations_parsed"]
+    assert (parsed[0]["received"], parsed[0]["parsed"]) == (3, 2)
+    # 요청 구간이 아니라 실제로 값이 담긴 구간이다. 시리즈가 늦게 시작하면 여기서만 드러난다.
+    assert (parsed[0]["first_date"], parsed[0]["last_date"]) == ("2025-01-02", "2025-01-03")
 
 
 def test_parse_fred_observations_returns_empty_when_all_missing() -> None:
@@ -249,4 +303,21 @@ def test_parse_fred_observations_returns_empty_when_all_missing() -> None:
         }
     )
 
-    assert parse_fred_observations(TreasurySeries.US_10Y, envelope) == ()
+    with capture_logs() as logs:
+        assert parse_fred_observations(TreasurySeries.US_10Y, envelope) == ()
+
+    # 구간 전체가 결측인 상태. 백필은 재실행이 없으므로 반드시 드러나야 한다.
+    dropped = [entry for entry in logs if entry["event"] == "fred_observations_missing_dropped"]
+    assert (dropped[0]["log_level"], dropped[0]["received"], dropped[0]["dropped"]) == ("warning", 1, 1)
+    parsed = [entry for entry in logs if entry["event"] == "fred_observations_parsed"]
+    assert (parsed[0]["parsed"], parsed[0]["first_date"]) == (0, "")
+
+
+def test_parse_fred_observations_does_not_warn_when_nothing_is_dropped() -> None:
+    envelope = FredObservationsEnvelope.model_validate(FRED_DGS10_RESPONSE)
+
+    with capture_logs() as logs:
+        observations = parse_fred_observations(TreasurySeries.US_10Y, envelope)
+
+    assert len(observations) == 1
+    assert not [entry for entry in logs if entry["event"] == "fred_observations_missing_dropped"]

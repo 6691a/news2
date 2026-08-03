@@ -22,7 +22,7 @@ async def test_collect_results_calls_intraday_apis_and_returns_typed_bodies() ->
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         return httpx.Response(
-            200,
+            status.HTTP_200_OK,
             headers={
                 "tr_cont": "M" if len(requests) == 1 else "",
                 "authorization": "response-secret",
@@ -94,7 +94,7 @@ async def test_collect_results_calls_intraday_apis_and_returns_typed_bodies() ->
 async def test_collect_results_preserves_kis_error_body() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
-            200,
+            status.HTTP_200_OK,
             request=request,
             json={
                 "rt_cd": "1",
@@ -130,7 +130,7 @@ async def test_collect_results_preserves_non_json_response() -> None:
             client=client,
         )
 
-    assert results[0].http_status == 200
+    assert results[0].http_status == status.HTTP_200_OK
     assert isinstance(results[0].body, schemas.InvestorFlowTextBody)
     assert results[0].body.root == "not json at all"
     assert results[0].model_dump(mode="json")["body"] == "not json at all"

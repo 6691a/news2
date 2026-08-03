@@ -12,7 +12,7 @@ from app.core.database import Database
 from app.core.logging import configure_logging, get_logger
 from app.core.sentry import SentryRuntime, configure_sentry, flush_sentry
 from app.core.models import utc_now
-from app.instruments.models import Market
+from app.instruments.models import InstrumentKind, Market
 from app.instruments.repository import InstrumentRepository
 from app.kis.korea.quote import KISKoreaWebSocketQuote
 from app.kis.korea.repository import KISKoreaTickRepository
@@ -50,8 +50,14 @@ async def main(
 
     try:
         watched_instruments = await instrument_repository.list_watched()
+        subscribed = 0
+        skipped = 0
         for instrument in watched_instruments:
-            if instrument.market is not Market.KRX:
+            # 지수(KOSPI)는 시장이 KRX여도 체결가가 없어 실시간 체결·호가 TR로 받을 수 없다.
+            # 구독을 시도하면 KIS가 거절하고 그 예외가 이 프로세스를 죽인다. 일봉은
+            # app.ohlcv가 Yahoo 지수 심볼로 따로 받는다.
+            if instrument.market is not Market.KRX or instrument.kind is InstrumentKind.INDEX:
+                skipped += 1
                 continue
 
             for tr_id in (
@@ -64,6 +70,16 @@ async def main(
                         tr_id=tr_id,
                     )
                 )
+            subscribed += 1
+
+        # 추적 종목이 늘었는데 구독이 늘지 않는 상태가 로그로 드러나야 한다.
+        logger.info(
+            "kis_tick_subscriptions_ready",
+            market="korea",
+            watched=len(watched_instruments),
+            subscribed=subscribed,
+            skipped=skipped,
+        )
 
         async with asyncio.TaskGroup() as task_group:
             task_group.create_task(quote.run())

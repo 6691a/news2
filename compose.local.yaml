@@ -15,24 +15,6 @@ services:
       timeout: 3s
       retries: 5
 
-  postgres-mcp:
-    image: ghcr.io/pgedge/postgres-mcp:sha-cc13a18-with-kb
-    profiles: [mcp]
-    environment:
-      PGEDGE_DB_HOST: db
-      PGEDGE_DB_PORT: "5432"
-      PGEDGE_DB_NAME: news2
-      PGEDGE_DB_USER: news2
-      PGEDGE_DB_PASSWORD: news2
-      PGEDGE_DB_SSLMODE: disable
-      PGEDGE_DB_ALLOW_WRITES: "false"
-      PGEDGE_LLM_ENABLED: "false"
-      PGEDGE_EMBEDDING_ENABLED: "false"
-      PGEDGE_KB_ENABLED: "false"
-    depends_on:
-      db:
-        condition: service_healthy
-
   redis:
     image: redis:7-alpine
     ports:
@@ -40,31 +22,31 @@ services:
     volumes:
       - redisdata:/data
 
-  celery-worker:
-    build: .
-    # .env는 호스트용 값, .env.docker는 컨테이너 안에서 덮어쓸 값(뒤가 이긴다).
-    env_file: [.env, .env.docker]
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_started
-    restart: always
-    # 30분에 한 번, IO 한 번 + DB write 한 번이라 동시성 1로 충분하다.
-    command: ["celery", "-A", "app.core.celery", "worker", "--loglevel=info", "--concurrency=1"]
-    stop_grace_period: 10s
-
-  celery-beat:
-    build: .
-    # .env는 호스트용 값, .env.docker는 컨테이너 안에서 덮어쓸 값(뒤가 이긴다).
-    env_file: [.env, .env.docker]
-    depends_on:
-      redis:
-        condition: service_started
-    restart: always
-    # beat는 반드시 1개만 띄운다. 2개면 모든 잡이 2번 실행된다.
-    command: ["celery", "-A", "app.core.celery", "beat", "--loglevel=info"]
-    stop_grace_period: 10s
+#  celery-worker:
+#    build: .
+#    # .env는 호스트용 값, .env.docker는 컨테이너 안에서 덮어쓸 값(뒤가 이긴다).
+#    env_file: [.env, .env.docker]
+#    depends_on:
+#      db:
+#        condition: service_healthy
+#      redis:
+#        condition: service_started
+#    restart: always
+#    # 30분에 한 번, IO 한 번 + DB write 한 번이라 동시성 1로 충분하다.
+#    command: ["celery", "-A", "app.core.celery", "worker", "--loglevel=info", "--concurrency=1"]
+#    stop_grace_period: 10s
+#
+#  celery-beat:
+#    build: .
+#    # .env는 호스트용 값, .env.docker는 컨테이너 안에서 덮어쓸 값(뒤가 이긴다).
+#    env_file: [.env, .env.docker]
+#    depends_on:
+#      redis:
+#        condition: service_started
+#    restart: always
+#    # beat는 반드시 1개만 띄운다. 2개면 모든 잡이 2번 실행된다.
+#    command: ["celery", "-A", "app.core.celery", "beat", "--loglevel=info"]
+#    stop_grace_period: 10s
 
 #  kis-korea-quote:
 #    build: .

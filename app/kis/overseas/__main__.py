@@ -29,6 +29,7 @@ logger = get_logger(__name__)
 
 KIS_MARKET_BY_INSTRUMENT_MARKET: dict[Market, KISOverseasMarket] = {
     Market.NASDAQ: KISOverseasMarket.NASDAQ,
+    Market.NYSE: KISOverseasMarket.NYSE,
     Market.NYSE_ARCA: KISOverseasMarket.AMEX,
 }
 
@@ -56,9 +57,21 @@ async def main(
 
     try:
         watched_instruments = await instrument_repository.list_watched()
+        subscribed = 0
+        skipped = 0
         for instrument in watched_instruments:
             kis_market = KIS_MARKET_BY_INSTRUMENT_MARKET.get(instrument.market)
             if kis_market is None:
+                # 국내·지수·환율·선물은 KIS 해외주식 실시간 대상이 아니다. 다만 매핑을
+                # 빠뜨려도 같은 모양이라(실제로 NYSE가 빠져 TSM이 조용히 누락됐었다)
+                # 건너뛴 대상을 남긴다.
+                skipped += 1
+                logger.info(
+                    "kis_tick_market_not_subscribable",
+                    market="overseas",
+                    ticker=instrument.ticker,
+                    instrument_market=instrument.market.value,
+                )
                 continue
 
             for tr_id in (
@@ -72,6 +85,16 @@ async def main(
                         tr_id=tr_id,
                     )
                 )
+            subscribed += 1
+
+        # 추적 종목이 늘었는데 구독이 늘지 않는 상태가 로그로 드러나야 한다.
+        logger.info(
+            "kis_tick_subscriptions_ready",
+            market="overseas",
+            watched=len(watched_instruments),
+            subscribed=subscribed,
+            skipped=skipped,
+        )
 
         async with asyncio.TaskGroup() as task_group:
             task_group.create_task(quote.run())
