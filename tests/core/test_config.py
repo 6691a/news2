@@ -1,4 +1,4 @@
-from collections.abc import Iterator
+from collections.abc import Mapping
 
 from pydantic import ValidationError
 import pytest
@@ -6,76 +6,84 @@ import pytest
 from app.core.config import Settings
 
 
-@pytest.fixture
-def required_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, object]]:
-    for name in (
-        'SENTRY_DSN',
-        'SENTRY_ENVIRONMENT',
-        'SENTRY_RELEASE',
-        'SENTRY_TRACES_SAMPLE_RATE',
-        'SENTRY_ERROR_SAMPLE_RATE',
-    ):
-        monkeypatch.delenv(name, raising=False)
-    yield {
-        'database_url': 'postgresql+asyncpg://user:pass@localhost/news2',
-        'redis_url': 'redis://localhost:6379/0',
-        'kis_app_key': 'app-key',
-        'kis_app_secret': 'app-secret',
-        'kis_rest_domain': 'https://rest.example',
-        'kis_websocket_domain': 'wss://websocket.example',
-        'kis_virtual_rest_domain': 'https://virtual-rest.example',
-        'kis_virtual_websocket_domain': 'wss://virtual-websocket.example',
-        'fred_api_key': 'fred-key',
-        'sentry_dsn': 'https://public@example.ingest.sentry.io/1',
-        'sentry_environment': 'test',
-        'sentry_release': 'news2@test',
+def build_settings(**overrides: object) -> Settings:
+    values: dict[str, object] = {
+        "database_url": "postgresql+asyncpg://news2:news2@localhost/news2",
+        "redis_url": "redis://localhost:6379/0",
+        "kis_app_key": "app-key",
+        "kis_app_secret": "app-secret",
+        "kis_rest_domain": "https://kis.example.com",
+        "kis_websocket_domain": "wss://kis.example.com",
+        "kis_virtual_rest_domain": "https://virtual-kis.example.com",
+        "kis_virtual_websocket_domain": "wss://virtual-kis.example.com",
+        "fred_api_key": "fred-key",
     }
+    values.update(overrides)
+    return Settings(_env_file=None, **values)  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize('field', ['sentry_dsn', 'sentry_environment', 'sentry_release'])
-def test_sentry_required_setting_cannot_be_missing(
-    required_settings: dict[str, object],
-    field: str,
-) -> None:
-    required_settings.pop(field)
+def test_notification_settings_default_to_safe_local_values() -> None:
+    settings = build_settings()
 
-    with pytest.raises(ValidationError):
-        Settings(_env_file=None, **required_settings)
-
-
-@pytest.mark.parametrize('field', ['sentry_dsn', 'sentry_environment', 'sentry_release'])
-def test_sentry_required_setting_cannot_be_blank(
-    required_settings: dict[str, object],
-    field: str,
-) -> None:
-    required_settings[field] = '   '
-
-    with pytest.raises(ValidationError):
-        Settings(_env_file=None, **required_settings)
-
-
-def test_sentry_dsn_requires_https(required_settings: dict[str, object]) -> None:
-    required_settings['sentry_dsn'] = 'http://public@example.ingest.sentry.io/1'
-
-    with pytest.raises(ValidationError):
-        Settings(_env_file=None, **required_settings)
-
-
-@pytest.mark.parametrize('field', ['sentry_traces_sample_rate', 'sentry_error_sample_rate'])
-@pytest.mark.parametrize('value', [-0.01, 1.01, ''])
-def test_sentry_sample_rate_must_be_between_zero_and_one(
-    required_settings: dict[str, object],
-    field: str,
-    value: object,
-) -> None:
-    required_settings[field] = value
-
-    with pytest.raises(ValidationError):
-        Settings(_env_file=None, **required_settings)
-
-
-def test_sentry_sample_rates_have_safe_defaults(required_settings: dict[str, object]) -> None:
-    settings = Settings(_env_file=None, **required_settings)
-
+    assert settings.sentry_dsn == ""
+    assert settings.sentry_environment == "local"
+    assert settings.sentry_release == ""
     assert settings.sentry_traces_sample_rate == 0.1
     assert settings.sentry_error_sample_rate == 1.0
+    assert settings.slack_notifications_enabled is False
+    assert settings.issue_digest_interval_seconds == 3600
+    assert settings.issue_event_retention_seconds == 86400
+    assert settings.issue_llm_provider == "openai"
+
+
+def test_nonempty_sentry_dsn_requires_https() -> None:
+    with pytest.raises(ValidationError):
+        build_settings(sentry_dsn="http://public@example.ingest.sentry.io/1")
+
+
+@pytest.mark.parametrize("field", ["sentry_traces_sample_rate", "sentry_error_sample_rate"])
+@pytest.mark.parametrize("value", [-0.01, 1.01, ""])
+def test_sentry_sample_rate_must_be_between_zero_and_one(field: str, value: object) -> None:
+    with pytest.raises(ValidationError):
+        build_settings(**{field: value})
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"slack_bot_token": ""}, "SLACK_BOT_TOKEN"),
+        ({"slack_issues_channel_id": ""}, "SLACK_ISSUES_CHANNEL_ID"),
+        ({"slack_reports_channel_id": ""}, "SLACK_REPORTS_CHANNEL_ID"),
+        ({"issue_llm_model": ""}, "ISSUE_LLM_MODEL"),
+        ({"openai_api_key": ""}, "OPENAI_API_KEY"),
+    ],
+)
+def test_enabled_slack_requires_delivery_and_llm_settings(
+    overrides: Mapping[str, object],
+    message: str,
+) -> None:
+    enabled = {
+        "slack_notifications_enabled": True,
+        "slack_bot_token": "xoxb-test",
+        "slack_issues_channel_id": "CISSUES",
+        "slack_reports_channel_id": "CREPORTS",
+        "issue_llm_model": "gpt-test",
+        "openai_api_key": "sk-test",
+    }
+    enabled.update(overrides)
+
+    with pytest.raises(ValidationError, match=message):
+        build_settings(**enabled)
+
+
+def test_issue_event_retention_covers_two_digest_intervals() -> None:
+    with pytest.raises(ValidationError, match="ISSUE_EVENT_RETENTION_SECONDS"):
+        build_settings(
+            issue_digest_interval_seconds=50_000,
+            issue_event_retention_seconds=86_400,
+        )
+
+
+def test_unsupported_llm_provider_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="ISSUE_LLM_PROVIDER"):
+        build_settings(issue_llm_provider="unknown")

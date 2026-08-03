@@ -5,7 +5,7 @@ from celery.exceptions import Retry
 from app.kis.korea.investor import tasks
 
 
-def _boom(_options: object) -> None:
+def _boom(_options: object, **_: object) -> None:
     """수집 중 네트워크 오류가 난 상황을 만든다."""
 
     raise httpx.ConnectError("boom")
@@ -53,7 +53,7 @@ def test_market_task_keeps_exponential_backoff(monkeypatch: pytest.MonkeyPatch) 
 
 def test_response_errors_are_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
     # rt_cd 가 0이 아닌 응답은 다시 물어봐도 같은 답이 온다. httpx 오류만 재시도한다.
-    def raise_value_error(_options: object) -> None:
+    def raise_value_error(_options: object, **_: object) -> None:
         raise ValueError("모의투자 설정")
 
     monkeypatch.setattr(tasks, "main", raise_value_error)

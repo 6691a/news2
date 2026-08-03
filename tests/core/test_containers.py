@@ -10,6 +10,10 @@ from app.kis.overseas.quote import KISOverseasWebSocketQuote
 from app.kis.overseas.repository import KISOverseasTickRepository
 from app.kis.schemas import KISWebSocketTokenResponse
 from app.macro.us.treasury.service import UsTreasuryYieldService
+from app.notifications.collector import IssueCollector
+from app.notifications.llm import OpenAIResponsesIssueAnalyzer
+from app.notifications.service import IssueDigestService
+from app.notifications.slack import SlackGateway
 
 
 def test_container_provides_instrument_repository() -> None:
@@ -69,3 +73,14 @@ async def test_container_provides_kis_auth_and_websocket_quotes() -> None:
     assert korea_quote.token is token
     assert isinstance(overseas_quote, KISOverseasWebSocketQuote)
     assert overseas_quote.token is token
+    assert isinstance(korea_quote.issue_collector, IssueCollector)
+    assert isinstance(overseas_quote.issue_collector, IssueCollector)
+
+
+def test_container_provides_notification_components() -> None:
+    container = Container()
+
+    assert isinstance(container.issue_collector(), IssueCollector)
+    assert isinstance(container.issue_llm_analyzer(), OpenAIResponsesIssueAnalyzer)
+    assert isinstance(container.slack_gateway(), SlackGateway)
+    assert isinstance(container.issue_digest_service(), IssueDigestService)

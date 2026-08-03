@@ -15,7 +15,7 @@ configure_logging(app_settings)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """애플리케이션 시작 시 DB 연결을 확인하고 종료 시 연결 풀을 정리한다.
+    """애플리케이션 시작 때 DB 연결을 확인하고 종료 때 연결 자원을 정리한다.
 
     Args:
         app: 수명주기를 적용할 FastAPI 애플리케이션.

@@ -26,6 +26,8 @@ from app.core.models import utc_now
 from app.kis.korea.investor.repository import KISInvestorFlowRepository, snapshot_slot_start
 from app.kis.korea.investor.schemas import InvestorFlowPhase, InvestorFlowProbeOptions
 from app.kis.korea.investor.service import KISKoreaInvestorFlowService
+from app.notifications.collector import IssueEventRecorder, safe_record_issue
+from app.notifications.models import IssueEvent, IssueKind
 
 
 app_settings = container.settings()
@@ -97,6 +99,11 @@ async def main(
         Redis,
         Provide[Container.redis_client],
     ],
+    issue_collector: Annotated[
+        IssueEventRecorder,
+        Provide[Container.issue_collector],
+    ],
+    scheduled: bool = False,
 ) -> None:
     """투자자 수급을 한 번 수집해 DB에 저장한다.
 
@@ -106,6 +113,8 @@ async def main(
         repository: 수집 결과를 저장할 repository.
         database: 종료 시 정리할 데이터베이스 자원.
         redis: 종료 시 정리할 토큰 캐시 연결.
+        issue_collector: 운영 이슈 이벤트 기록기.
+        scheduled: Celery 정기 실행 여부.
     """
 
     # 요청은 순차 전송되지만 한 스냅샷으로 묶어야 UNIQUE 키와 분석이 단순해진다.
@@ -148,6 +157,21 @@ async def main(
             last_date=saved_dates[-1].isoformat() if saved_dates else "",
             snapshot_ts=snapshot_ts.isoformat(),
         )
+        if scheduled and options.phase is InvestorFlowPhase.INTRADAY and responses == 0:
+            await safe_record_issue(
+                issue_collector,
+                IssueEvent.create(
+                    kind=IssueKind.EMPTY_RESULT,
+                    service="kis.korea.investor",
+                    operation="collect_intraday",
+                    stable_dimension=options.scope.value,
+                    summary="Scheduled investor-flow collection returned no responses.",
+                    metric_name="fetched",
+                    observed_value=0,
+                    expected_value=1,
+                    context={"phase": options.phase.value, "fetched": 0},
+                ),
+            )
     finally:
         await database.dispose()
         await redis.aclose()

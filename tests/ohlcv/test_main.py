@@ -3,11 +3,15 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
+from dependency_injector import providers
 
 from app.core.collection import BACKFILL_KEYWORD, BACKFILL_START
+from app.core.containers import container
 from app.instruments.models import Instrument, InstrumentKind, Market
-from app.ohlcv.__main__ import _collect, build_options
-from app.ohlcv.schemas import DailyBar, DailyBarsResult, OhlcvScope
+from app.ohlcv.__main__ import _collect, build_options, main
+from app.notifications.models import IssueKind
+from tests.notifications.fakes import RecordingIssueCollector
+from app.ohlcv.schemas import DailyBar, DailyBarsResult, OhlcvCollectOptions, OhlcvScope
 
 
 def test_build_options_defaults_to_all_markets_recent_window() -> None:
@@ -161,3 +165,51 @@ async def test_collect_warns_when_instrument_returns_no_bars(caplog: pytest.LogC
 
     assert result.bars == ()
     assert "ohlcv_instrument_returned_no_bars" in caplog.text
+
+
+class _FakeInstrumentRepository:
+    async def list_watched(self) -> list[Instrument]:
+        return [_instrument("005930", Market.KRX, InstrumentKind.EQUITY)]
+
+
+class _FakeOhlcvRepository:
+    async def save_daily(self, results: object, snapshot_ts: datetime) -> int:
+        del results, snapshot_ts
+        return 0
+
+
+class _FakeDatabase:
+    async def dispose(self) -> None:
+        pass
+
+
+def _run_empty_ohlcv(options: OhlcvCollectOptions, *, scheduled: bool) -> RecordingIssueCollector:
+    collector = RecordingIssueCollector()
+    with (
+        container.korea_daily_chart_service.override(providers.Object(_FakeKoreaService())),
+        container.overseas_daily_chart_service.override(providers.Object(_FakeOverseasService())),
+        container.instrument_repository.override(providers.Object(_FakeInstrumentRepository())),
+        container.ohlcv_repository.override(providers.Object(_FakeOhlcvRepository())),
+        container.database.override(providers.Object(_FakeDatabase())),
+        container.issue_collector.override(providers.Object(collector)),
+    ):
+        import asyncio
+
+        asyncio.run(main(options, scheduled=scheduled))
+    return collector
+
+
+def test_scheduled_ohlcv_zero_total_emits_empty_result() -> None:
+    collector = _run_empty_ohlcv(build_options(["korea"]), scheduled=True)
+
+    assert [event.kind for event in collector.events] == [IssueKind.EMPTY_RESULT]
+    assert collector.events[0].context == {"scope": "korea", "fetched": 0}
+
+
+def test_explicit_ohlcv_period_zero_total_does_not_emit() -> None:
+    collector = _run_empty_ohlcv(
+        build_options(["korea", "2026-07-01", "2026-07-02"]),
+        scheduled=True,
+    )
+
+    assert collector.events == []

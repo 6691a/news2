@@ -12,29 +12,31 @@ configure_sentry(settings, SentryRuntime.CELERY)
 
 @worker_init.connect
 def _set_worker_runtime(**_: object) -> None:
-    '''Celery worker 프로세스의 Sentry 태그를 설정한다.'''
+    """Celery worker 프로세스의 Sentry 태그를 설정한다."""
 
     set_sentry_runtime(SentryRuntime.CELERY_WORKER)
 
 
 @beat_init.connect
 def _set_beat_runtime(**_: object) -> None:
-    '''Celery beat 프로세스의 Sentry 태그를 설정한다.'''
+    """Celery beat 프로세스의 Sentry 태그를 설정한다."""
 
     set_sentry_runtime(SentryRuntime.CELERY_BEAT)
 
 
 def _beat_schedule() -> dict[str, object]:
-    '''Sentry 초기화 후 각 패키지의 beat 스케줄을 불러온다.'''
+    """Sentry 초기화 후 각 패키지의 beat 스케줄을 불러온다."""
 
     from app.kis.korea.investor.beats import beat_schedule as investor_beat_schedule
     from app.macro.us.treasury.beats import beat_schedule as us_treasury_beat_schedule
+    from app.notifications.beats import beat_schedule as notification_beat_schedule
     from app.ohlcv.beats import beat_schedule as ohlcv_beat_schedule
 
     return {
         **investor_beat_schedule(),
         **us_treasury_beat_schedule(),
         **ohlcv_beat_schedule(),
+        **notification_beat_schedule(),
     }
 
 
@@ -51,6 +53,7 @@ app.conf.imports = (
     "app.kis.korea.investor.tasks",
     "app.macro.us.treasury.tasks",
     "app.ohlcv.tasks",
+    "app.notifications.tasks",
 )
 
 # beat crontab만 KST로 읽는다. CLAUDE.md의 UTC 규칙은 저장되는 datetime에 대한

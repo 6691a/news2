@@ -14,7 +14,7 @@ from app.macro.us.treasury.schemas import TreasuryPhase, TreasuryProbeOptions, T
 def _capture_options(captured: list[TreasuryProbeOptions]):
     """main에 전달된 옵션을 기록한다."""
 
-    async def fake_main(options: TreasuryProbeOptions) -> None:
+    async def fake_main(options: TreasuryProbeOptions, **_: object) -> None:
         captured.append(options)
 
     return fake_main
@@ -77,7 +77,7 @@ def test_collect_final_retries_on_a_flat_thirty_minute_delay(monkeypatch: pytest
     # H.15 공표 지연은 지수 백오프로 물러나면 첫 재시도가 너무 빨리 소진된다.
     captured: dict[str, object] = {}
 
-    def raise_unavailable(_options: object) -> None:
+    def raise_unavailable(_options: object, **_: object) -> None:
         raise TreasuryDataUnavailableError("아직 공표되지 않았다")
 
     monkeypatch.setattr(tasks, "main", raise_unavailable)
@@ -94,7 +94,7 @@ def test_collect_final_retries_on_a_flat_thirty_minute_delay(monkeypatch: pytest
 def test_intraday_task_retries_on_network_error(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
 
-    def boom(_options: object) -> None:
+    def boom(_options: object, **_: object) -> None:
         raise httpx.ConnectError("boom")
 
     monkeypatch.setattr(tasks, "main", boom)
@@ -112,7 +112,7 @@ def test_intraday_task_retries_on_yfinance_error(monkeypatch: pytest.MonkeyPatch
     # 연결·타임아웃은 다음 회차를 기다릴 이유가 없다. 짧게 물러났다가 다시 부른다.
     captured: dict[str, object] = {}
 
-    def boom(_options: object) -> None:
+    def boom(_options: object, **_: object) -> None:
         raise YahooRetryableError("boom")
 
     monkeypatch.setattr(tasks, "main", boom)
@@ -128,7 +128,7 @@ def test_intraday_task_does_not_retry_on_yfinance_rate_limit(monkeypatch: pytest
     # 엣지 차단은 분 단위로 풀리지 않는다. 재시도는 익명 쿼터만 더 소모한다.
     captured: dict[str, object] = {}
 
-    def rate_limited(_options: object) -> None:
+    def rate_limited(_options: object, **_: object) -> None:
         raise YFRateLimitError
 
     monkeypatch.setattr(tasks, "main", rate_limited)

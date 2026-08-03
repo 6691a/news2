@@ -37,7 +37,7 @@ def task_collect_korea_daily() -> None:
     지난 기간 백필은 `python -m app.ohlcv korea 2024-01-01 2026-07-31`로 한다.
     """
 
-    asyncio.run(main(OhlcvCollectOptions(scope=OhlcvScope.KOREA)))
+    asyncio.run(main(OhlcvCollectOptions(scope=OhlcvScope.KOREA), scheduled=True))
 
 
 @app.task(name="ohlcv.collect_overseas_daily", **DAILY_RETRY_POLICY)
@@ -47,4 +47,4 @@ def task_collect_overseas_daily() -> None:
     지난 기간 백필은 `python -m app.ohlcv overseas 2024-01-01 2026-07-31`로 한다.
     """
 
-    asyncio.run(main(OhlcvCollectOptions(scope=OhlcvScope.OVERSEAS)))
+    asyncio.run(main(OhlcvCollectOptions(scope=OhlcvScope.OVERSEAS), scheduled=True))

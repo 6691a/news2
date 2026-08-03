@@ -26,6 +26,7 @@ from app.kis.websocket.base import (
     QUEUE_OVERFLOW_LOG_INTERVAL,
     KISBaseWebSocketQuote,
 )
+from app.notifications.models import IssueEvent, IssueKind
 
 
 class FakeWebSocket:
@@ -106,6 +107,17 @@ class StubKISWebSocketQuote(KISBaseWebSocketQuote):
 
     async def unsubscribe_wire(self, subscription: KISWebSocketSubscription) -> None:
         await self._unsubscribe(subscription)
+
+
+class RecordingIssueCollector:
+    def __init__(self) -> None:
+        self.events: list[IssueEvent] = []
+        self.recorded = asyncio.Event()
+
+    async def record(self, event: IssueEvent) -> bool:
+        self.events.append(event)
+        self.recorded.set()
+        return True
 
 
 def _make_settings() -> Settings:
@@ -520,6 +532,60 @@ async def test_run_logs_connection_closed_before_reconnecting(
     assert closed[0]["code"] == 1011
     assert closed[0]["reason"] == "server restart"
     assert closed[0]["closed_by"] == "server"
+
+
+@pytest.mark.asyncio
+async def test_recoverable_disconnect_records_one_reconnect_issue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    collector = RecordingIssueCollector()
+    quote = make_quote(
+        issue_collector=collector,
+        reconnect_min_uptime=0.0,
+    )
+    connection = DelayedConnection(ClosingWebSocket())
+    connection.allow_connection.set()
+    monkeypatch.setattr(
+        "app.kis.websocket.base.websockets.connect",
+        lambda *_args, **_kwargs: connection,
+    )
+
+    task = asyncio.create_task(quote.run())
+    await asyncio.wait_for(collector.recorded.wait(), timeout=0.2)
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
+
+    assert len(collector.events) == 1
+    event = collector.events[0]
+    assert event.kind is IssueKind.WEBSOCKET_RECONNECT
+    assert event.service == "kis.websocket"
+    assert event.operation == "StubKISWebSocketQuote.run"
+    assert event.context == {
+        "retry_count": 1,
+        "reason_type": "ConnectionClosedError",
+    }
+
+
+@pytest.mark.asyncio
+async def test_run_cancellation_does_not_record_reconnect_issue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    collector = RecordingIssueCollector()
+    quote = make_quote(issue_collector=collector)
+    connection = DelayedConnection(FakeWebSocket())
+    monkeypatch.setattr(
+        "app.kis.websocket.base.websockets.connect",
+        lambda *_args, **_kwargs: connection,
+    )
+
+    task = asyncio.create_task(quote.run())
+    await connection.started.wait()
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
+
+    assert collector.events == []
 
 
 @pytest.mark.asyncio
