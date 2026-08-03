@@ -62,7 +62,8 @@ def task_collect_stock_intraday() -> None:
             InvestorFlowProbeOptions(
                 phase=InvestorFlowPhase.INTRADAY,
                 scope=InvestorFlowScope.STOCK,
-            )
+            ),
+            scheduled=True,
         )
     )
 
@@ -76,7 +77,8 @@ def task_collect_market_intraday() -> None:
             InvestorFlowProbeOptions(
                 phase=InvestorFlowPhase.INTRADAY,
                 scope=InvestorFlowScope.MARKET,
-            )
+            ),
+            scheduled=True,
         )
     )
 
@@ -94,6 +96,7 @@ def task_collect_final() -> None:
             InvestorFlowProbeOptions(
                 phase=InvestorFlowPhase.FINAL,
                 trade_date=utc_now().astimezone(KST).date(),
-            )
+            ),
+            scheduled=True,
         )
     )

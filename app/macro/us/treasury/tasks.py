@@ -57,7 +57,8 @@ def task_collect_intraday(series: str) -> None:
             TreasuryProbeOptions(
                 phase=TreasuryPhase.INTRADAY,
                 series=TreasurySeries(series),
-            )
+            ),
+            scheduled=True,
         )
     )
 
@@ -87,6 +88,7 @@ def task_collect_final(target_date: str) -> None:
             TreasuryProbeOptions(
                 phase=TreasuryPhase.FINAL,
                 target_date=date.fromisoformat(target_date),
-            )
+            ),
+            scheduled=True,
         )
     )

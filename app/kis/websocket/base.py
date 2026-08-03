@@ -26,6 +26,8 @@ from app.kis.schemas import (
     KISWebSocketSubscriptionResponse,
     KISWebSocketTokenResponse,
 )
+from app.notifications.collector import IssueEventRecorder, NoopIssueCollector
+from app.notifications.models import IssueEvent, IssueKind
 
 logger = get_logger(__name__)
 
@@ -45,6 +47,7 @@ class KISBaseWebSocketQuote(ABC):
         reconnect_min_uptime: float = 1.0,
         reconnect_max_backoff: float = 30.0,
         subscription_ack_timeout: float = 5.0,
+        issue_collector: IssueEventRecorder | None = None,
     ) -> None:
         """설정과 승인 토큰으로 공용 시세 웹소켓 기반을 초기화한다.
 
@@ -55,6 +58,7 @@ class KISBaseWebSocketQuote(ABC):
             reconnect_min_uptime: 짧은 연결로 판단할 기준 시간(초).
             reconnect_max_backoff: 재연결 백오프 상한(초).
             subscription_ack_timeout: 모든 구독 확인을 기다릴 최대 시간(초).
+            issue_collector: 복구 재연결 이슈를 기록할 선택적 수집기.
 
         Raises:
             ValueError: 큐 크기 또는 구독 확인 시간이 0 이하인 경우.
@@ -83,6 +87,7 @@ class KISBaseWebSocketQuote(ABC):
         self._queue: asyncio.Queue[str] = asyncio.Queue(maxsize=queue_maxsize)
         self._dropped_messages = 0
         self._subscription_lock = asyncio.Lock()
+        self.issue_collector = issue_collector or NoopIssueCollector()
 
     @property
     def subscriptions(self) -> frozenset[KISWebSocketSubscription]:
@@ -271,8 +276,10 @@ class KISBaseWebSocketQuote(ABC):
 
         loop = asyncio.get_running_loop()
         short_streak = 0
+        reconnect_count = 0
 
         async for ws in websockets.connect(self._get_domain(), ping_interval=None):
+            reconnect_error: websockets.ConnectionClosedError | None = None
             self._ws = ws
             started = loop.time()
             self._active_subscriptions.clear()
@@ -293,6 +300,8 @@ class KISBaseWebSocketQuote(ABC):
                     reason=close_frame.reason if close_frame is not None else "",
                     closed_by="server" if error.rcvd is not None else "client",
                 )
+                if isinstance(error, websockets.ConnectionClosedError):
+                    reconnect_error = error
             finally:
                 receive_task.cancel()
                 try:
@@ -305,6 +314,27 @@ class KISBaseWebSocketQuote(ABC):
                     # 전파는 원래 예외에 맡기고, 묻히는 쪽만 남긴다.
                     logger.exception("kis_websocket_receive_task_failed")
                 self._ws = None
+
+            if reconnect_error is not None:
+                reconnect_count += 1
+                try:
+                    await self.issue_collector.record(
+                        IssueEvent.create(
+                            kind=IssueKind.WEBSOCKET_RECONNECT,
+                            service="kis.websocket",
+                            operation=f"{type(self).__name__}.run",
+                            summary="KIS WebSocket reconnect scheduled after an abnormal close.",
+                            context={
+                                "retry_count": reconnect_count,
+                                "reason_type": type(reconnect_error).__name__,
+                            },
+                        )
+                    )
+                except Exception:
+                    logger.exception(
+                        "kis_websocket_reconnect_issue_record_failed",
+                        operation=f"{type(self).__name__}.run",
+                    )
 
             if loop.time() - started < self._reconnect_min_uptime:
                 short_streak += 1

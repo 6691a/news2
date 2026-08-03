@@ -27,6 +27,8 @@ from app.core.models import utc_now
 from app.macro.us.treasury.repository import UsTreasuryYieldRepository
 from app.macro.us.treasury.schemas import TreasuryPhase, TreasuryProbeOptions, TreasurySeries
 from app.macro.us.treasury.service import UsTreasuryYieldService
+from app.notifications.collector import IssueEventRecorder, safe_record_issue
+from app.notifications.models import IssueEvent, IssueKind
 
 
 configure_logging(container.settings())
@@ -87,6 +89,11 @@ async def main(
         Database,
         Provide[Container.database],
     ],
+    issue_collector: Annotated[
+        IssueEventRecorder,
+        Provide[Container.issue_collector],
+    ],
+    scheduled: bool = False,
 ) -> None:
     """미국 국채 지표를 한 번 수집해 DB에 저장한다.
 
@@ -95,6 +102,8 @@ async def main(
         service: 미국 국채 수집 서비스.
         repository: 수집 결과를 저장할 repository.
         database: 종료 시 정리할 데이터베이스 자원.
+        issue_collector: 운영 이슈 이벤트 기록기.
+        scheduled: Celery 정기 실행 여부.
     """
 
     # event_ts·observation_date가 dedupe 키라 snapshot_ts는 눈금을 맞출 필요가 없다.
@@ -136,6 +145,25 @@ async def main(
             saved=saved,
             snapshot_ts=snapshot_ts.isoformat(),
         )
+        if scheduled and options.phase is TreasuryPhase.INTRADAY and fetched == 0:
+            await safe_record_issue(
+                issue_collector,
+                IssueEvent.create(
+                    kind=IssueKind.EMPTY_RESULT,
+                    service="macro.us.treasury",
+                    operation="collect_intraday",
+                    stable_dimension=options.series.value,
+                    summary="Scheduled Treasury intraday collection returned no bars.",
+                    metric_name="fetched",
+                    observed_value=0,
+                    expected_value=1,
+                    context={
+                        "phase": options.phase.value,
+                        "series": options.series.value,
+                        "fetched": 0,
+                    },
+                ),
+            )
     finally:
         await database.dispose()
 

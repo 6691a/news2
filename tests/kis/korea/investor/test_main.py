@@ -12,6 +12,8 @@ from app.core.models import utc_now
 from app.kis.korea.investor import __main__ as main_module
 from app.kis.korea.investor.__main__ import build_options, main
 from app.kis.korea.investor.schemas import InvestorFlowPhase, InvestorFlowProbeOptions
+from app.notifications.models import IssueKind
+from tests.notifications.fakes import RecordingIssueCollector
 
 
 def test_build_options_defaults_to_intraday() -> None:
@@ -144,3 +146,41 @@ def test_intraday_falls_back_to_the_snapshot_trade_date() -> None:
     saved = [entry for entry in logs if entry["event"] == "investor_flow_saved"]
     today_in_korea = utc_now().astimezone(KST).date().isoformat()
     assert (saved[0]["first_date"], saved[0]["last_date"]) == (today_in_korea, today_in_korea)
+
+
+class EmptyService:
+    async def collect_results(self, options: InvestorFlowProbeOptions, client: object) -> tuple[object, ...]:
+        del options, client
+        return ()
+
+
+def _run_empty_investor(options: InvestorFlowProbeOptions) -> RecordingIssueCollector:
+    collector = RecordingIssueCollector()
+    with (
+        container.korea_investor_flow_service.override(providers.Object(EmptyService())),
+        container.korea_investor_flow_repository.override(providers.Object(FakeRepository(set()))),
+        container.database.override(providers.Object(FakeDatabase())),
+        container.redis_client.override(providers.Object(FakeRedis())),
+        container.issue_collector.override(providers.Object(collector)),
+    ):
+        asyncio.run(main(options, scheduled=True))
+    return collector
+
+
+def test_scheduled_investor_intraday_zero_total_emits_empty_result() -> None:
+    collector = _run_empty_investor(InvestorFlowProbeOptions(phase=InvestorFlowPhase.INTRADAY))
+
+    assert [event.kind for event in collector.events] == [IssueKind.EMPTY_RESULT]
+    assert collector.events[0].context == {"phase": "intraday", "fetched": 0}
+
+
+def test_investor_final_zero_total_does_not_emit_for_possible_holiday() -> None:
+    collector = _run_empty_investor(
+        InvestorFlowProbeOptions(
+            phase=InvestorFlowPhase.FINAL,
+            start_date=date(2026, 8, 3),
+            trade_date=date(2026, 8, 3),
+        )
+    )
+
+    assert collector.events == []

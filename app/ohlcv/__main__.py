@@ -27,6 +27,8 @@ from app.ohlcv.korea import KISKoreaDailyChartService
 from app.ohlcv.overseas import YahooDailyChartService
 from app.ohlcv.repository import OhlcvRepository
 from app.ohlcv.schemas import DailyBarsResult, OhlcvCollectOptions, OhlcvScope
+from app.notifications.collector import IssueEventRecorder, safe_record_issue
+from app.notifications.models import IssueEvent, IssueKind
 
 
 configure_logging(container.settings())
@@ -90,6 +92,11 @@ async def main(
         Database,
         Provide[Container.database],
     ],
+    issue_collector: Annotated[
+        IssueEventRecorder,
+        Provide[Container.issue_collector],
+    ],
+    scheduled: bool = False,
 ) -> None:
     """추적 종목의 확정 일봉을 수집해 DB에 저장한다.
 
@@ -100,6 +107,8 @@ async def main(
         instrument_repository: 추적 종목 조회 repository.
         repository: 수집 결과를 저장할 repository.
         database: 종료 시 정리할 데이터베이스 자원.
+        issue_collector: 운영 이슈 이벤트 기록기.
+        scheduled: Celery 정기 실행 여부.
     """
 
     # ts가 dedupe 키라 snapshot_ts는 눈금을 맞출 필요가 없다.
@@ -142,6 +151,21 @@ async def main(
             last_ts=collected[-1].isoformat() if collected else "",
             snapshot_ts=snapshot_ts.isoformat(),
         )
+        if scheduled and options.start is None and instruments and not collected:
+            await safe_record_issue(
+                issue_collector,
+                IssueEvent.create(
+                    kind=IssueKind.EMPTY_RESULT,
+                    service="ohlcv",
+                    operation=f"collect_{options.scope.value}_daily",
+                    stable_dimension=options.scope.value,
+                    summary="Scheduled OHLCV collection returned no bars.",
+                    metric_name="fetched",
+                    observed_value=0,
+                    expected_value=1,
+                    context={"scope": options.scope.value, "fetched": 0},
+                ),
+            )
     finally:
         await database.dispose()
 

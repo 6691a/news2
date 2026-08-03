@@ -1,5 +1,6 @@
 from dependency_injector import containers, providers
 from redis.asyncio import Redis
+from slack_sdk.web.async_client import AsyncWebClient
 
 from app.core.config import settings as app_settings
 from app.core.database import Database
@@ -14,6 +15,11 @@ from app.kis.overseas.repository import KISOverseasTickRepository
 from app.kis.schemas import KISWebSocketTokenResponse
 from app.macro.us.treasury.repository import UsTreasuryYieldRepository
 from app.macro.us.treasury.service import UsTreasuryYieldService
+from app.notifications.aggregator import IssueAggregator
+from app.notifications.collector import IssueCollector
+from app.notifications.llm import OpenAIResponsesIssueAnalyzer
+from app.notifications.service import IssueDigestService
+from app.notifications.slack import SlackGateway
 from app.ohlcv.korea import KISKoreaDailyChartService
 from app.ohlcv.overseas import YahooDailyChartService
 from app.ohlcv.repository import OhlcvRepository
@@ -39,6 +45,41 @@ class Container(containers.DeclarativeContainer):
         settings.provided.redis_url,
         decode_responses=True,
     )
+    issue_collector = providers.Factory(
+        IssueCollector,
+        redis=redis_client,
+        interval_seconds=settings.provided.issue_digest_interval_seconds,
+        retention_seconds=settings.provided.issue_event_retention_seconds,
+    )
+    issue_aggregator = providers.Factory(
+        IssueAggregator,
+        redis=redis_client,
+        retention_seconds=settings.provided.issue_event_retention_seconds,
+    )
+    issue_llm_analyzer = providers.Factory(
+        OpenAIResponsesIssueAnalyzer,
+        api_key=settings.provided.openai_api_key,
+        model=settings.provided.issue_llm_model,
+        timeout_seconds=settings.provided.issue_llm_timeout_seconds,
+        max_groups=settings.provided.issue_llm_max_groups,
+    )
+    slack_client = providers.Factory(
+        AsyncWebClient,
+        token=settings.provided.slack_bot_token,
+    )
+    slack_gateway = providers.Factory(
+        SlackGateway,
+        client=slack_client,
+        issues_channel_id=settings.provided.slack_issues_channel_id,
+        reports_channel_id=settings.provided.slack_reports_channel_id,
+    )
+    issue_digest_service = providers.Factory(
+        IssueDigestService,
+        enabled=settings.provided.slack_notifications_enabled,
+        aggregator=issue_aggregator,
+        analyzer=issue_llm_analyzer,
+        slack_gateway=slack_gateway,
+    )
     kis_auth = providers.Factory(
         KISAuth,
         settings=settings,
@@ -57,11 +98,13 @@ class Container(containers.DeclarativeContainer):
         KISKoreaWebSocketQuote,
         settings=settings,
         token=websocket_token,
+        issue_collector=issue_collector,
     )
     overseas_websocket_quote = providers.Factory(
         KISOverseasWebSocketQuote,
         settings=settings,
         token=websocket_token,
+        issue_collector=issue_collector,
     )
     korea_tick_repository = providers.Factory(
         KISKoreaTickRepository,
