@@ -1,6 +1,7 @@
 import logging
 
 import pytest
+from fastapi import status
 
 from app.core.logging import RedactUrlQuery
 
@@ -23,20 +24,26 @@ def _record(*args: object) -> logging.LogRecord:
 
 
 def test_url_query_is_removed_from_log_arguments() -> None:
-    record = _record("GET", FRED_URL, "HTTP/1.1", 200, "OK")
+    record = _record("GET", FRED_URL, "HTTP/1.1", status.HTTP_200_OK, "OK")
 
     assert RedactUrlQuery().filter(record) is True
     # host와 path는 남아야 요청 대상을 계속 추적할 수 있다.
-    assert record.args == ("GET", "https://api.stlouisfed.org/fred/series/observations", "HTTP/1.1", 200, "OK")
+    assert record.args == (
+        "GET",
+        "https://api.stlouisfed.org/fred/series/observations",
+        "HTTP/1.1",
+        status.HTTP_200_OK,
+        "OK",
+    )
     assert "api_key" not in record.getMessage()
 
 
 def test_record_is_never_dropped() -> None:
-    record = _record("GET", "https://rest.example/uapi/quotations", "HTTP/1.1", 200, "OK")
+    record = _record("GET", "https://rest.example/uapi/quotations", "HTTP/1.1", status.HTTP_200_OK, "OK")
 
     # 비밀값이 없어도 레코드를 버리지 않는다. 호출 실패와 무응답이 구분돼야 한다.
     assert RedactUrlQuery().filter(record) is True
-    assert record.args == ("GET", "https://rest.example/uapi/quotations", "HTTP/1.1", 200, "OK")
+    assert record.args == ("GET", "https://rest.example/uapi/quotations", "HTTP/1.1", status.HTTP_200_OK, "OK")
 
 
 @pytest.mark.parametrize(

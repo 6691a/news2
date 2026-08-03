@@ -4,6 +4,7 @@ from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fastapi import status
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from structlog.testing import capture_logs
 
@@ -55,7 +56,7 @@ def _result(
         target_name=target,
         venue=venue,
         tr_id=tr_id,
-        http_status=200,
+        http_status=status.HTTP_200_OK,
         tr_cont="",
         body=parse_investor_flow_body(tr_id, response),
     )
