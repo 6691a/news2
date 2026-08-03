@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from structlog.testing import capture_logs
 
 from app.kis.korea.investor.repository import (
     KISInvestorFlowRepository,
@@ -261,6 +262,56 @@ async def test_save_skips_only_the_venue_already_stored_in_the_slot() -> None:
     rows = session.add_all.call_args.args[0]
     assert saved == len(rows) == len(InvestorType)
     assert {row.venue for row in rows} == {InvestorFlowVenue.NXT}
+
+
+@pytest.mark.asyncio
+async def test_unusable_response_warning_names_the_trade_date_and_venue() -> None:
+    """휴장일 백필에서 어느 날 무엇이 비었는지 로그만 보고 알 수 있어야 한다."""
+
+    # 성공 응답이지만 FINAL_OPTIONS의 거래일에 해당하는 행이 없다(휴장일과 같은 모양).
+    results = (
+        _result(
+            "005930", InvestorFlowVenue.NXT, InvestorFlowTrId.STOCK_FINAL, {"rt_cd": "1", "msg_cd": "X", "msg1": ""}
+        ),
+    )
+    session = AsyncMock(spec=AsyncSession)
+    session.execute.side_effect = [_execute_result([]), _execute_result([("005930", 1)])]
+    session.add_all = MagicMock()
+    session_context = AsyncMock()
+    session_context.__aenter__.return_value = session
+    session_factory = MagicMock(spec=async_sessionmaker)
+    session_factory.begin.return_value = session_context
+    repository = KISInvestorFlowRepository(cast("async_sessionmaker[AsyncSession]", session_factory))
+
+    with capture_logs() as logs:
+        saved = await repository.save(results, FINAL_OPTIONS, SNAPSHOT_TS)
+
+    assert saved == 0
+    unusable = [entry for entry in logs if entry["event"] == "investor_flow_response_unusable"]
+    assert len(unusable) == 1
+    assert unusable[0]["log_level"] == "warning"
+    assert unusable[0]["trade_date"] == FINAL_OPTIONS.trade_date.isoformat()
+    # 같은 종목을 KRX·NXT로 따로 부르므로 거래소가 없으면 어느 쪽이 빈 건지 알 수 없다.
+    assert unusable[0]["venue"] == InvestorFlowVenue.NXT.value
+
+
+@pytest.mark.asyncio
+async def test_missing_instrument_warning_names_the_trade_date() -> None:
+    results = (_result("999999", InvestorFlowVenue.KRX, InvestorFlowTrId.STOCK_FINAL, STOCK_FINAL_FLOW_RESPONSES[0]),)
+    session = AsyncMock(spec=AsyncSession)
+    session.execute.side_effect = [_execute_result([]), _execute_result([])]
+    session.add_all = MagicMock()
+    session_context = AsyncMock()
+    session_context.__aenter__.return_value = session
+    session_factory = MagicMock(spec=async_sessionmaker)
+    session_factory.begin.return_value = session_context
+    repository = KISInvestorFlowRepository(cast("async_sessionmaker[AsyncSession]", session_factory))
+
+    with capture_logs() as logs:
+        await repository.save(results, FINAL_OPTIONS, SNAPSHOT_TS)
+
+    missing = [entry for entry in logs if entry["event"] == "investor_flow_instrument_missing"]
+    assert missing[0]["trade_date"] == FINAL_OPTIONS.trade_date.isoformat()
 
 
 @pytest.mark.asyncio

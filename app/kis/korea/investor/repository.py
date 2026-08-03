@@ -282,6 +282,7 @@ class KISInvestorFlowRepository:
                         "investor_flow_instrument_missing",
                         target=result.target,
                         tr_id=result.tr_id.value,
+                        trade_date=trade_date.isoformat(),
                     )
                     continue
 
@@ -299,11 +300,16 @@ class KISInvestorFlowRepository:
                     # 오류 응답이거나, 성공 응답인데 해당 영업일 행이 없는 경우다.
                     # (마감 TR은 여러 날치를 돌려주므로 trade_date로 걸러낸다.)
                     # 조용히 사라지면 무인 배치에서 며칠씩 누락을 못 알아챈다.
+                    #
+                    # 백필은 한 번에 수십 거래일을 도므로 날짜와 거래소가 없으면 경고를
+                    # 보고도 어느 날이 비었는지 알 수 없다 — DB를 역으로 뒤져야 한다.
                     logger.warning(
                         "investor_flow_response_unusable",
                         target=result.target,
                         tr_id=result.tr_id.value,
+                        venue=result.venue.value,
                         http_status=result.http_status,
+                        trade_date=trade_date.isoformat(),
                     )
                 rows.extend(result_rows)
 
