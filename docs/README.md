@@ -220,7 +220,8 @@ uv run python -m app.ohlcv overseas 2025-06-01     # 시작일만 지정 — 오
 | `app.macro.us.treasury` | **1회** — FRED가 기간 조회를 지원한다 | 즉시 |
 | `app.kis.korea.investor` | **거래일마다 TR 5건** — 종목 확정 TR이 날짜를 하나씩만 받는다 | 약 400일 × 0.5초 ≈ 5분 |
 
-투자자 수급 백필만 호출 수가 많아 요청 사이에 간격을 둔다(`BACKFILL_PACING_SECONDS`).
+투자자 수급 백필만 호출 수가 많아 요청 사이에 간격을 둔다
+(`app/core/collection.py`의 `KIS_REQUEST_INTERVAL_SECONDS` — TR 사이와 거래일 사이 모두 같은 값).
 KIS 초당 거래건수 제한에 걸리면 HTTP 200 + `rt_cd != "0"`으로 와서 그 날짜만 0행이 되므로,
 백필 후에는 경고 로그에 빠진 날짜가 없는지 확인한다. 주말은 호출하지 않고 미리 거른다.
 

@@ -1,10 +1,21 @@
 class KISWebSocketNotConnectedError(Exception):
     def __init__(self) -> None:
+        """열린 웹소켓 연결이 없다는 사실을 알린다."""
+
         super().__init__("WebSocket connection is not established.")
 
 
 class KISWebSocketSubscriptionLimitError(Exception):
-    def __init__(self, max_subscriptions: int = 40) -> None:
+    def __init__(self, max_subscriptions: int) -> None:
+        """한도를 넘긴 구독 요청 정보를 보존한다.
+
+        기본값을 두지 않는다. 이 모듈이 base를 import하면 순환이 생겨 한도 상수를
+        공유할 수 없으므로, 대신 호출자가 `KIS_MAX_SUBSCRIPTIONS`를 넘기게 한다.
+
+        Args:
+            max_subscriptions: KIS가 허용하는 동시 구독 수.
+        """
+
         super().__init__(f"KIS WebSocket subscription limit exceeded: {max_subscriptions}")
 
 

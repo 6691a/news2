@@ -16,7 +16,7 @@ from dependency_injector.wiring import Provide, inject
 from redis.asyncio import Redis
 
 from app.core._time import KST
-from app.core.collection import BACKFILL_KEYWORD, BACKFILL_START
+from app.core.collection import BACKFILL_KEYWORD, BACKFILL_START, KIS_REQUEST_INTERVAL_SECONDS
 from app.core.containers import Container, container
 from app.core.database import Database
 from app.core.logging import configure_logging, get_logger
@@ -28,10 +28,6 @@ from app.kis.korea.investor.service import KISKoreaInvestorFlowService
 
 configure_logging(container.settings())
 logger = get_logger(__name__)
-
-# 백필은 거래일마다 TR 5건을 부른다. KIS 초당 거래건수 제한에 걸리면 HTTP 200 + rt_cd != "0"
-# 으로 와서 그 날짜만 조용히 0행이 되므로(경고 로그는 남는다) 여유 있게 쉬어 간다.
-BACKFILL_PACING_SECONDS = 0.5
 
 
 def build_options(argv: Sequence[str]) -> InvestorFlowProbeOptions:
@@ -108,8 +104,10 @@ async def main(
         saved = 0
         async with httpx.AsyncClient() as client:
             for index, unit in enumerate(units):
+                # 거래일이 바뀔 때도 KIS 초당 거래건수 제한을 지켜야 한다. 서비스가 TR
+                # 사이에 쓰는 것과 같은 간격을 쓴다 — 제한은 호출자가 누구든 동일하다.
                 if index:
-                    await asyncio.sleep(BACKFILL_PACING_SECONDS)
+                    await asyncio.sleep(KIS_REQUEST_INTERVAL_SECONDS)
                 results = await service.collect_results(unit, client)
                 responses += len(results)
                 saved += await repository.save(results, unit, snapshot_ts)
