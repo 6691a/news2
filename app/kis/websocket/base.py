@@ -31,6 +31,10 @@ logger = get_logger(__name__)
 
 KIS_MAX_SUBSCRIPTIONS = 40
 
+# 큐 포화는 한 번 시작되면 메시지마다 발생한다. 매번 남기면 로그가 유실보다 먼저
+# 시스템을 망가뜨리므로, 시작 시점과 이후 일정 간격으로만 남긴다.
+QUEUE_OVERFLOW_LOG_INTERVAL = 1000
+
 
 class KISBaseWebSocketQuote(ABC):
     def __init__(
@@ -156,6 +160,14 @@ class KISBaseWebSocketQuote(ABC):
             with suppress(asyncio.QueueEmpty):
                 self._queue.get_nowait()
             self._dropped_messages += 1
+            # 첫 유실(1건째)과 이후 간격마다 남긴다. 조용히 버리면 소비자가 느려진
+            # 구간의 시세가 사라진 것을 사후에 알 방법이 없다.
+            if self._dropped_messages % QUEUE_OVERFLOW_LOG_INTERVAL == 1:
+                logger.warning(
+                    "kis_websocket_queue_overflow",
+                    dropped_total=self._dropped_messages,
+                    queue_maxsize=self._queue_maxsize,
+                )
         self._queue.put_nowait(message)
 
     async def _send(
@@ -221,7 +233,13 @@ class KISBaseWebSocketQuote(ABC):
             try:
                 await self._send(subscription, KISTrType.SUBSCRIBE)
             except (KISWebSocketNotConnectedError, websockets.ConnectionClosed):
-                pass
+                # 연결 전·끊긴 상태면 요청 목록에만 남긴다. run()이 재연결한 뒤
+                # _resubscribe_all이 다시 보내므로 여기서 실패로 보지 않는다.
+                logger.warning(
+                    "kis_websocket_subscribe_deferred",
+                    tr_id=subscription.tr_id,
+                    tr_key=subscription.tr_key,
+                )
 
     async def _unsubscribe(self, subscription: KISWebSocketSubscription) -> None:
         """공용 구독을 요청 목록에서 제거하고 연결 중이면 해지한다.
@@ -240,7 +258,13 @@ class KISBaseWebSocketQuote(ABC):
             try:
                 await self._send(subscription, KISTrType.UNSUBSCRIBE)
             except (KISWebSocketNotConnectedError, websockets.ConnectionClosed):
-                pass
+                # 요청 목록에서 이미 뺐으므로 재연결해도 다시 구독되지 않는다.
+                # 해지 전송 자체는 실패했지만 상태는 의도대로라 실패로 보지 않는다.
+                logger.warning(
+                    "kis_websocket_unsubscribe_deferred",
+                    tr_id=subscription.tr_id,
+                    tr_key=subscription.tr_key,
+                )
 
     async def run(self) -> None:
         """연결, 수신, 재구독 및 무한 재연결을 실행한다."""
@@ -258,12 +282,28 @@ class KISBaseWebSocketQuote(ABC):
                 await self._resubscribe_all(ws)
                 await self._wait_for_subscription_acknowledgements(receive_task)
                 await receive_task
-            except websockets.ConnectionClosed:
-                pass
+            except websockets.ConnectionClosed as error:
+                # 재연결로 복구되는 정상 경로다. 그래도 끊긴 사실과 사유는 남긴다 —
+                # 끊김이 잦아지는 것을 로그로만 알 수 있다.
+                # error.code/.reason은 websockets 13.1에서 deprecated라 프레임을 직접 읽는다.
+                close_frame = error.rcvd or error.sent
+                logger.warning(
+                    "kis_websocket_connection_closed",
+                    code=close_frame.code if close_frame is not None else None,
+                    reason=close_frame.reason if close_frame is not None else "",
+                    closed_by="server" if error.rcvd is not None else "client",
+                )
             finally:
                 receive_task.cancel()
-                with suppress(asyncio.CancelledError, Exception):
+                try:
                     await receive_task
+                except asyncio.CancelledError:
+                    # 바로 위에서 우리가 건 취소다. 재연결 루프가 이어서 처리한다.
+                    pass
+                except Exception:
+                    # 이미 다른 예외가 전파 중일 때 수신 태스크의 실패가 여기로 온다.
+                    # 전파는 원래 예외에 맡기고, 묻히는 쪽만 남긴다.
+                    logger.exception("kis_websocket_receive_task_failed")
                 self._ws = None
 
             if loop.time() - started < self._reconnect_min_uptime:

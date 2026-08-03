@@ -6,6 +6,8 @@ from typing import cast
 
 import pytest
 import websockets
+from structlog.testing import capture_logs
+from websockets.frames import Close
 from websockets.protocol import State
 
 from app.core.config import Settings
@@ -21,6 +23,7 @@ from app.kis.schemas import (
 )
 from app.kis.websocket.base import (
     KIS_MAX_SUBSCRIPTIONS,
+    QUEUE_OVERFLOW_LOG_INTERVAL,
     KISBaseWebSocketQuote,
 )
 
@@ -54,6 +57,13 @@ class FakeWebSocket:
     async def close(self) -> None:
         self.state = State.CLOSED
         self.closed.set()
+
+
+class ClosingWebSocket(FakeWebSocket):
+    """서버가 close 프레임을 보내 수신이 끊긴 상황을 재현한다."""
+
+    async def __anext__(self) -> str:
+        raise websockets.ConnectionClosedError(Close(1011, "server restart"), None)
 
 
 class DelayedConnection:
@@ -336,6 +346,36 @@ async def test_unsubscribe_removes_requested_subscription() -> None:
 
 
 @pytest.mark.asyncio
+async def test_subscribe_without_connection_is_logged_as_deferred() -> None:
+    quote = make_quote()
+
+    with capture_logs() as logs:
+        await quote.subscribe_wire(make_subscription())
+
+    deferred = [entry for entry in logs if entry["event"] == "kis_websocket_subscribe_deferred"]
+    assert len(deferred) == 1
+    assert deferred[0]["log_level"] == "warning"
+    assert (deferred[0]["tr_id"], deferred[0]["tr_key"]) == ("TR00", "KEY00")
+    # 전송은 실패했어도 요청 목록에는 남아야 재연결 후 _resubscribe_all이 보낸다.
+    assert quote.subscriptions == frozenset({make_subscription()})
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_without_connection_is_logged_as_deferred() -> None:
+    quote = make_quote()
+    subscription = make_subscription()
+    await quote.subscribe_wire(subscription)
+
+    with capture_logs() as logs:
+        await quote.unsubscribe_wire(subscription)
+
+    deferred = [entry for entry in logs if entry["event"] == "kis_websocket_unsubscribe_deferred"]
+    assert len(deferred) == 1
+    assert deferred[0]["log_level"] == "warning"
+    assert quote.subscriptions == frozenset()
+
+
+@pytest.mark.asyncio
 async def test_resubscribe_sends_all_requested_subscriptions() -> None:
     quote = make_quote()
     subscription = make_subscription()
@@ -358,6 +398,32 @@ def test_full_queue_drops_oldest_message() -> None:
     drained = [quote._queue.get_nowait() for _ in range(quote._queue.qsize())]
     assert drained == ["b", "c"]
     assert quote.dropped_messages == 1
+
+
+def test_full_queue_logs_the_first_dropped_message() -> None:
+    quote = make_quote(queue_maxsize=1)
+
+    with capture_logs() as logs:
+        for message in ["a", "b"]:
+            quote._enqueue(message)
+
+    overflow = [entry for entry in logs if entry["event"] == "kis_websocket_queue_overflow"]
+    assert len(overflow) == 1
+    assert overflow[0]["log_level"] == "warning"
+    assert overflow[0]["dropped_total"] == 1
+    assert overflow[0]["queue_maxsize"] == 1
+
+
+def test_full_queue_logs_at_the_configured_interval() -> None:
+    quote = make_quote(queue_maxsize=1)
+
+    with capture_logs() as logs:
+        for index in range(QUEUE_OVERFLOW_LOG_INTERVAL + 2):
+            quote._enqueue(str(index))
+
+    overflow = [entry for entry in logs if entry["event"] == "kis_websocket_queue_overflow"]
+    # 유실 1건째와 QUEUE_OVERFLOW_LOG_INTERVAL + 1건째만 남는다.
+    assert [entry["dropped_total"] for entry in overflow] == [1, QUEUE_OVERFLOW_LOG_INTERVAL + 1]
 
 
 def test_zero_queue_maxsize_is_rejected() -> None:
@@ -396,6 +462,64 @@ async def test_run_raises_when_subscription_acknowledgement_times_out(
         await quote.run()
 
     assert captured.value.pending_subscriptions == frozenset({("TR00", "KEY00")})
+
+
+@pytest.mark.asyncio
+async def test_run_logs_receive_task_failure_while_it_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    quote = make_quote()
+    await quote.subscribe_wire(make_subscription())
+    websocket = FakeWebSocket(
+        messages=[
+            make_subscription_response(
+                rt_cd="1",
+                msg_cd="OPSP9999",
+                msg1="INVALID SUBSCRIPTION",
+            )
+        ]
+    )
+    connection = DelayedConnection(websocket)
+    connection.allow_connection.set()
+    monkeypatch.setattr(
+        "app.kis.websocket.base.websockets.connect",
+        lambda *_args, **_kwargs: connection,
+    )
+
+    with capture_logs() as logs:
+        with pytest.raises(KISWebSocketSubscriptionRejectedError):
+            await quote.run()
+
+    # suppress(Exception)이던 자리다. 예외는 그대로 올라가되 원인이 로그에 남아야 한다.
+    assert [entry["event"] for entry in logs].count("kis_websocket_receive_task_failed") == 1
+
+
+@pytest.mark.asyncio
+async def test_run_logs_connection_closed_before_reconnecting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 짧은 연결 백오프를 0으로 두어 재연결 대기 없이 두 번째 회차로 넘어가게 한다.
+    quote = make_quote(reconnect_min_uptime=0.0)
+    connection = DelayedConnection(ClosingWebSocket())
+    connection.allow_connection.set()
+    monkeypatch.setattr(
+        "app.kis.websocket.base.websockets.connect",
+        lambda *_args, **_kwargs: connection,
+    )
+
+    with capture_logs() as logs:
+        task = asyncio.create_task(quote.run())
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+    closed = [entry for entry in logs if entry["event"] == "kis_websocket_connection_closed"]
+    assert len(closed) == 1
+    assert closed[0]["log_level"] == "warning"
+    assert closed[0]["code"] == 1011
+    assert closed[0]["reason"] == "server restart"
+    assert closed[0]["closed_by"] == "server"
 
 
 @pytest.mark.asyncio
