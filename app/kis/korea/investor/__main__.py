@@ -1,4 +1,9 @@
-"""국내 투자자 수급 수집·저장 엔트리포인트."""
+"""국내 투자자 수급 수집·저장 엔트리포인트.
+
+python -m app.kis.korea.investor               # 장중 가집계
+python -m app.kis.korea.investor 2026-07-30    # 그 날짜의 마감 확정치
+python -m app.kis.korea.investor backfill      # 기준 시작일(2025-01-01)부터 오늘까지 확정치
+"""
 
 import asyncio
 import sys
@@ -10,6 +15,8 @@ import httpx
 from dependency_injector.wiring import Provide, inject
 from redis.asyncio import Redis
 
+from app.core._time import KST
+from app.core.collection import BACKFILL_KEYWORD, BACKFILL_START
 from app.core.containers import Container, container
 from app.core.database import Database
 from app.core.logging import configure_logging, get_logger
@@ -22,6 +29,10 @@ from app.kis.korea.investor.service import KISKoreaInvestorFlowService
 configure_logging(container.settings())
 logger = get_logger(__name__)
 
+# 백필은 거래일마다 TR 5건을 부른다. KIS 초당 거래건수 제한에 걸리면 HTTP 200 + rt_cd != "0"
+# 으로 와서 그 날짜만 조용히 0행이 되므로(경고 로그는 남는다) 여유 있게 쉬어 간다.
+BACKFILL_PACING_SECONDS = 0.5
+
 
 def build_options(argv: Sequence[str]) -> InvestorFlowProbeOptions:
     """명령행 인자로 실행 옵션을 만든다.
@@ -30,14 +41,22 @@ def build_options(argv: Sequence[str]) -> InvestorFlowProbeOptions:
         argv: 프로그램 이름을 제외한 명령행 인자.
 
     Returns:
-        인자가 없으면 장중 가집계 옵션, `YYYY-MM-DD`를 주면 그 날짜의 마감 확정치 옵션.
+        인자가 없으면 장중 가집계 옵션, `YYYY-MM-DD`를 주면 그 날짜의 마감 확정치 옵션,
+        `backfill`이면 기준 시작일부터 오늘까지의 마감 확정치 옵션.
 
     Raises:
-        ValueError: 날짜 인자가 ISO 8601 형식이 아닌 경우.
+        ValueError: 날짜 인자가 `backfill`도 ISO 8601 형식도 아닌 경우.
     """
 
     if not argv:
         return InvestorFlowProbeOptions(phase=InvestorFlowPhase.INTRADAY)
+
+    if argv[0] == BACKFILL_KEYWORD:
+        return InvestorFlowProbeOptions(
+            phase=InvestorFlowPhase.FINAL,
+            start_date=BACKFILL_START,
+            trade_date=utc_now().astimezone(KST).date(),
+        )
 
     return InvestorFlowProbeOptions(
         phase=InvestorFlowPhase.FINAL,
@@ -79,14 +98,27 @@ async def main(
     # 슬롯 시작으로 내려야 Celery 재시도가 중복 대신 무시로 끝난다.
     snapshot_ts = snapshot_slot_start(utc_now())
     try:
-        async with httpx.AsyncClient() as client:
-            results = await service.collect_results(options, client)
+        # 장중·단일 마감은 원소 하나짜리 목록이라 아래 루프가 기존 동작 그대로다.
+        # 백필만 거래일 수만큼 돈다 — 종목 확정 TR이 날짜를 하나씩만 받기 때문이다.
+        units = [options.model_copy(update={"start_date": None, "trade_date": day}) for day in options.trade_dates()]
+        if not units:
+            units = [options]
 
-        saved = await repository.save(results, options, snapshot_ts)
+        responses = 0
+        saved = 0
+        async with httpx.AsyncClient() as client:
+            for index, unit in enumerate(units):
+                if index:
+                    await asyncio.sleep(BACKFILL_PACING_SECONDS)
+                results = await service.collect_results(unit, client)
+                responses += len(results)
+                saved += await repository.save(results, unit, snapshot_ts)
+
         logger.info(
             "investor_flow_saved",
             phase=options.phase.value,
-            responses=len(results),
+            trade_dates=len(units),
+            responses=responses,
             saved=saved,
             snapshot_ts=snapshot_ts.isoformat(),
         )

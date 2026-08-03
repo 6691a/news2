@@ -8,8 +8,8 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import Insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.macro.us_treasury.repository import UsTreasuryYieldRepository
-from app.macro.us_treasury.schemas import (
+from app.macro.us.treasury.repository import UsTreasuryYieldRepository
+from app.macro.us.treasury.schemas import (
     IntradayBar,
     TreasuryFinalObservation,
     TreasuryIntradayResult,
@@ -138,7 +138,7 @@ async def test_save_final_inserts_with_on_conflict_do_nothing(rowcount: int) -> 
         yield_pct=Decimal("4.64"),
     )
 
-    saved = await repository.save_final(observation, SNAPSHOT_TS)
+    saved = await repository.save_final([observation], SNAPSHOT_TS)
 
     assert saved == rowcount
     statement = session.execute.await_args.args[0]
@@ -151,3 +151,36 @@ async def test_save_final_inserts_with_on_conflict_do_nothing(rowcount: int) -> 
     assert params["observation_date_m0"] == date(2026, 7, 24)
     assert params["yield_pct_m0"] == Decimal("4.64")
     assert params["snapshot_ts_m0"] == SNAPSHOT_TS
+
+
+@pytest.mark.asyncio
+async def test_save_final_inserts_backfill_range_in_one_statement() -> None:
+    session_factory, session = _session_factory(rowcount=2)
+    repository = UsTreasuryYieldRepository(cast("async_sessionmaker[AsyncSession]", session_factory))
+    observations = [
+        TreasuryFinalObservation(
+            series=TreasurySeries.US_10Y,
+            observation_date=date(2025, 1, 2),
+            yield_pct=Decimal("4.56"),
+        ),
+        TreasuryFinalObservation(
+            series=TreasurySeries.US_10Y,
+            observation_date=date(2025, 1, 3),
+            yield_pct=Decimal("4.60"),
+        ),
+    ]
+
+    assert await repository.save_final(observations, SNAPSHOT_TS) == 2
+
+    params = session.execute.await_args.args[0].compile(dialect=postgresql.dialect()).params
+    assert params["observation_date_m0"] == date(2025, 1, 2)
+    assert params["observation_date_m1"] == date(2025, 1, 3)
+
+
+@pytest.mark.asyncio
+async def test_save_final_without_observations_does_not_insert() -> None:
+    session_factory, session = _session_factory(rowcount=0)
+    repository = UsTreasuryYieldRepository(cast("async_sessionmaker[AsyncSession]", session_factory))
+
+    assert await repository.save_final([], SNAPSHOT_TS) == 0
+    session.execute.assert_not_awaited()

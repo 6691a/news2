@@ -242,11 +242,22 @@ class KISInvestorFlowRepository:
             저장한 InvestorFlow 행 수. 전부 건너뛰었으면 0.
         """
 
+        # 확정치는 하루에 하나뿐이라 snapshot_ts와 무관하게 이미 있으면 건너뛴다.
+        # 백필은 수백 날짜를 한 snapshot_ts로 도는데, 여기에 snapshot_ts 조건을 걸면
+        # 재실행할 때마다 같은 거래일이 통째로 다시 쌓인다.
+        # 장중 잠정치는 반대로 슬롯별 이력이 분석 대상이라 snapshot_ts로 좁힌다.
+        trade_date = options.trade_date or snapshot_ts.astimezone(KST).date()
+        is_provisional = options.phase is InvestorFlowPhase.INTRADAY
         saved_statement = (
             select(InvestorFlow.instrument_id, InvestorFlow.venue)
-            .where(InvestorFlow.snapshot_ts == snapshot_ts)
+            .where(
+                InvestorFlow.trade_date == trade_date,
+                InvestorFlow.is_provisional.is_(is_provisional),
+            )
             .distinct()
         )
+        if is_provisional:
+            saved_statement = saved_statement.where(InvestorFlow.snapshot_ts == snapshot_ts)
         instrument_statement = select(Instrument.ticker, Instrument.id).where(
             Instrument.market == Market.KRX,
             Instrument.ticker.in_({result.target for result in results}),
@@ -254,8 +265,8 @@ class KISInvestorFlowRepository:
         rows: list[InvestorFlow] = []
 
         async with self._session_factory.begin() as session:
-            # 종목 task와 시장 task는 스케줄이 달라 같은 슬롯에 겹칠 수 있다.
-            # 슬롯 단위로 막으면 먼저 저장한 쪽이 나중 쪽을 통째로 삼키므로
+            # 종목 task와 시장 task는 스케줄이 달라 같은 거래일에 겹칠 수 있다.
+            # 거래일 단위로만 막으면 먼저 저장한 쪽이 나중 쪽을 통째로 삼키므로
             # (instrument, venue) 단위로 좁힌다. 마감 종목 TR은 KRX와 NXT를 따로
             # 호출하므로, instrument만 보면 KRX만 저장된 부분 성공 상태에서
             # 재실행해도 NXT를 영영 복구하지 못한다.

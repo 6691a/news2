@@ -1,10 +1,12 @@
 """KIS 국내 투자자 수급 수집 서비스."""
 
+import asyncio
 from typing import Protocol, cast
 
 import httpx
 from pydantic import JsonValue
 
+from app.core.collection import KIS_REQUEST_INTERVAL_SECONDS
 from app.core.config import Settings
 from app.core.http import raise_for_status
 from app.kis.korea.investor.requests import build_headers, build_requests
@@ -59,6 +61,8 @@ class KISKoreaInvestorFlowService:
         token = await self.auth.get_auth_token()
         results: list[InvestorFlowResult] = []
         for request in build_requests(options):
+            # 한 거래일에 TR 5건이 연달아 나간다. 백필에서 이걸 쉬지 않고 보내면 제한에 걸린다.
+            await asyncio.sleep(KIS_REQUEST_INTERVAL_SECONDS)
             response = await client.get(
                 url=f"{self.settings.kis_rest_domain.rstrip('/')}{request.tr_id.path}",
                 headers=build_headers(

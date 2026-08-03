@@ -8,7 +8,7 @@ from typing import Self
 import pandas as pd
 from pydantic import AwareDatetime, BaseModel, model_validator
 
-from app.macro.us_treasury.exceptions import TreasuryDataUnavailableError
+from app.macro.us.treasury.exceptions import TreasuryDataUnavailableError
 
 
 # 1분봉의 길이. 봉 시작 시각 + 이 간격이 아직 오지 않았으면 값이 더 변한다.
@@ -57,6 +57,7 @@ class TreasuryPhase(StrEnum):
 
     INTRADAY = "intraday"
     FINAL = "final"
+    BACKFILL = "backfill"
 
 
 class TreasuryProbeOptions(BaseModel):
@@ -64,7 +65,8 @@ class TreasuryProbeOptions(BaseModel):
 
     phase: TreasuryPhase
     series: TreasurySeries = TreasurySeries.US_10Y
-    target_date: date | None = None
+    target_date: date | None = None  # FINAL은 대상 영업일, BACKFILL은 구간 종료일
+    start_date: date | None = None  # BACKFILL 구간 시작일
 
     @model_validator(mode="after")
     def validate_target_date(self) -> Self:
@@ -75,16 +77,25 @@ class TreasuryProbeOptions(BaseModel):
 
         Raises:
             ValueError: 확정 수집에 대상 날짜가 없거나 확정치 소스가 없는 계열이거나,
-                장중 수집에 대상 날짜를 준 경우.
+                장중 수집에 날짜를 주었거나, 백필 구간이 뒤집힌 경우.
         """
 
+        if self.phase is TreasuryPhase.INTRADAY:
+            if self.target_date is not None or self.start_date is not None:
+                raise ValueError("intraday phase does not accept dates")
+            return self
+
+        if self.series is not TreasurySeries.US_10Y:
+            raise ValueError("final phase supports US10Y only")
+        if self.target_date is None:
+            raise ValueError("final phase requires target_date")
         if self.phase is TreasuryPhase.FINAL:
-            if self.target_date is None:
-                raise ValueError("final phase requires target_date")
-            if self.series is not TreasurySeries.US_10Y:
-                raise ValueError("final phase supports US10Y only")
-        elif self.target_date is not None:
-            raise ValueError("intraday phase does not accept target_date")
+            if self.start_date is not None:
+                raise ValueError("final phase does not accept start_date")
+        elif self.start_date is None:
+            raise ValueError("backfill phase requires start_date")
+        elif self.start_date > self.target_date:
+            raise ValueError("start_date must not be after target_date")
         return self
 
 
@@ -255,3 +266,32 @@ def parse_fred_response(
         )
 
     raise TreasuryDataUnavailableError(f"{target_date.isoformat()} FRED 관측값이 아직 없습니다.")
+
+
+def parse_fred_observations(
+    series: TreasurySeries,
+    response: FredObservationsEnvelope,
+) -> tuple[TreasuryFinalObservation, ...]:
+    """FRED observations 응답에서 값이 있는 관측값을 전부 뽑는다.
+
+    백필용이라 단일일 조회와 달리 결측을 예외로 올리지 않는다. 구간에는 휴장일이 반드시
+    섞여 있고, 기준 시작일(`BACKFILL_START`)보다 시리즈가 늦게 시작하는 경우도 결측으로
+    온다 — 둘 다 "있는 것만 담는다"가 맞는 처리다.
+
+    Args:
+        series: 조회한 계열.
+        response: 검증된 FRED observations 응답.
+
+    Returns:
+        날짜 오름차순의 확정 수익률 목록. 전부 결측이면 빈 튜플.
+    """
+
+    return tuple(
+        TreasuryFinalObservation(
+            series=series,
+            observation_date=observation.date,
+            yield_pct=Decimal(observation.value),
+        )
+        for observation in sorted(response.observations, key=lambda item: item.date)
+        if observation.value != FRED_MISSING_VALUE
+    )

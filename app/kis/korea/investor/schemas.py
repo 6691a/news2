@@ -1,13 +1,21 @@
 """KIS 국내 투자자 수급 수집 스키마."""
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from enum import StrEnum
 from typing import Self, cast
 
-from pydantic import BaseModel, Field, JsonValue, RootModel, model_validator
+from pydantic import BaseModel, Field, JsonValue, RootModel, field_validator, model_validator
 
+from app.core.logging import get_logger
 from app.kis.schemas.common import KISBaseModel
+
+
+logger = get_logger(__name__)
+
+
+# date.weekday()의 토요일. 이 값 이상이면 주말이다.
+SATURDAY = 5
 
 
 class InvestorFlowPhase(StrEnum):
@@ -163,15 +171,49 @@ class InvestorFlowProbeOptions(BaseModel):
 
     phase: InvestorFlowPhase
     scope: InvestorFlowScope = InvestorFlowScope.ALL
-    trade_date: date | None = None
+    trade_date: date | None = None  # 마감 조회일. 백필에서는 구간 종료일
+    start_date: date | None = None  # 백필 구간 시작일. None이면 trade_date 하루만
 
     @model_validator(mode="after")
     def validate_trade_date(self) -> Self:
-        """마감 조회일의 존재 여부를 검증한다."""
+        """마감 조회일과 백필 구간을 검증한다.
 
-        if self.phase is InvestorFlowPhase.FINAL and self.trade_date is None:
-            raise ValueError("final phase requires trade_date")
+        Returns:
+            검증을 통과한 옵션.
+
+        Raises:
+            ValueError: 마감 수집에 조회일이 없거나, 장중 수집에 백필 구간을 주었거나,
+                구간 순서가 뒤집힌 경우.
+        """
+
+        if self.phase is InvestorFlowPhase.FINAL:
+            if self.trade_date is None:
+                raise ValueError("final phase requires trade_date")
+            if self.start_date is not None and self.start_date > self.trade_date:
+                raise ValueError("start_date must not be after trade_date")
+        elif self.start_date is not None:
+            raise ValueError("intraday phase does not accept start_date")
         return self
+
+    def trade_dates(self) -> tuple[date, ...]:
+        """수집할 한국 거래일 목록을 만든다.
+
+        종목 확정 TR은 날짜를 하나씩만 받아 백필이 곧 날짜 루프다. 주말은 어차피 빈
+        응답이라 미리 걸러 호출 수를 3할 줄인다. 공휴일은 달력 없이 거를 수 없어
+        그대로 호출하고 0행으로 끝난다.
+
+        Returns:
+            오름차순 거래일 목록. 백필이 아니면 원소 하나(또는 장중이면 빈 튜플).
+        """
+
+        if self.trade_date is None:
+            return ()
+        if self.start_date is None:
+            return (self.trade_date,)
+
+        span = (self.trade_date - self.start_date).days
+        days = (self.start_date + timedelta(days=offset) for offset in range(span + 1))
+        return tuple(day for day in days if day.weekday() < SATURDAY)
 
 
 class InvestorFlowRequest(BaseModel):
@@ -426,6 +468,39 @@ class StockFinalFlowBody(InvestorFlowEnvelope):
 
     output1: StockFinalFlowSummary
     output2: list[StockFinalFlowRow]
+
+    @field_validator("output2", mode="before")
+    @classmethod
+    def drop_blank_rows(cls, value: object) -> object:
+        """값이 비어 있는 자리 채움 행을 파싱 전에 걸러낸다.
+
+        KIS는 데이터가 없는 구간에도 30행을 채워 보내는데, 그 행들은 **영업일자만 있고
+        나머지가 전부 빈 문자열**이다. NXT(넥스트레이드) 거래소가 생기기 전 날짜를
+        조회하면 전 구간이 이 모양으로 온다. 두면 숫자 필드 파싱이 통째로 깨져 그 날짜
+        수집이 죽으므로, 종가가 비어 있는 행을 값 없는 행으로 보고 버린다.
+
+        버린 건수는 로그로 남긴다 — 응답 형식이 바뀌어 멀쩡한 행을 버리기 시작해도
+        건수만 보면 드러나야 한다.
+
+        Args:
+            value: 검증 전 output2 값.
+
+        Returns:
+            종가가 채워진 행만 남긴 목록. 목록이 아니면 원본 그대로 돌려준다.
+        """
+
+        if not isinstance(value, list):
+            return value
+
+        rows = [row for row in value if not isinstance(row, dict) or row.get("stck_clpr")]
+        if len(rows) != len(value):
+            logger.warning(
+                "investor_flow_blank_rows_dropped",
+                tr_id=InvestorFlowTrId.STOCK_FINAL.value,
+                received=len(value),
+                dropped=len(value) - len(rows),
+            )
+        return rows
 
 
 class MarketFinalFlowRow(BaseModel):

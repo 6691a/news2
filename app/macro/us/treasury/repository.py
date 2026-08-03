@@ -1,6 +1,7 @@
 """미국 국채 수집 결과를 ORM 행으로 변환하고 저장한다."""
 
-from datetime import datetime
+from collections.abc import Sequence
+from datetime import date, datetime
 from decimal import Decimal
 from typing import TypedDict
 
@@ -8,8 +9,8 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.logging import get_logger
-from app.macro.us_treasury.models import UsTreasuryBar, UsTreasuryYieldDaily
-from app.macro.us_treasury.schemas import (
+from app.macro.us.treasury.models import UsTreasuryBar, UsTreasuryYieldDaily
+from app.macro.us.treasury.schemas import (
     TreasuryFinalObservation,
     TreasuryIntradayResult,
     TreasurySeries,
@@ -26,6 +27,13 @@ class _TreasuryBarInsertValues(TypedDict):
     high: Decimal | None
     low: Decimal | None
     close: Decimal
+    snapshot_ts: datetime
+
+
+class _TreasuryYieldInsertValues(TypedDict):
+    series: TreasurySeries
+    observation_date: date
+    yield_pct: Decimal
     snapshot_ts: datetime
 
 
@@ -94,47 +102,50 @@ class UsTreasuryYieldRepository:
 
     async def save_final(
         self,
-        observation: TreasuryFinalObservation,
+        observations: Sequence[TreasuryFinalObservation],
         snapshot_ts: datetime,
     ) -> int:
         """일별 확정 수익률을 저장한다.
 
+        하루치 배치와 구간 백필이 같은 경로를 탄다. 확정치는 사후 정정이 드물고 정정되면
+        재수집보다 소급 확인이 먼저라, 이미 있는 날짜는 갱신하지 않고 흘려보낸다.
+
         Args:
-            observation: 한 영업일의 확정 수익률.
+            observations: 저장할 확정 수익률 목록. 비어 있으면 아무것도 하지 않는다.
             snapshot_ts: 응답을 수신한 timezone-aware UTC 시각.
 
         Returns:
-            삽입한 행 수. 이미 저장돼 있으면 0.
+            새로 삽입한 행 수. 전부 이미 저장돼 있으면 0.
         """
 
+        if not observations:
+            logger.info("treasury_final_saved", fetched=0, saved=0)
+            return 0
+
+        rows: list[_TreasuryYieldInsertValues] = [
+            {
+                "series": observation.series,
+                "observation_date": observation.observation_date,
+                "yield_pct": observation.yield_pct,
+                "snapshot_ts": snapshot_ts,
+            }
+            for observation in observations
+        ]
         statement = (
             insert(UsTreasuryYieldDaily)
-            .values(
-                [
-                    {
-                        "series": observation.series,
-                        "observation_date": observation.observation_date,
-                        "yield_pct": observation.yield_pct,
-                        "snapshot_ts": snapshot_ts,
-                    }
-                ]
-            )
+            .values(rows)
             .on_conflict_do_nothing(constraint="uq_us_treasury_yield_daily_series_observation_date")
         )
 
         async with self._session_factory.begin() as session:
             saved = (await session.execute(statement)).rowcount
 
-        if saved:
-            logger.info(
-                "treasury_final_saved",
-                series=observation.series.value,
-                observation_date=observation.observation_date.isoformat(),
-            )
-        else:
-            logger.info(
-                "treasury_final_already_saved",
-                series=observation.series.value,
-                observation_date=observation.observation_date.isoformat(),
-            )
+        logger.info(
+            "treasury_final_saved",
+            series=observations[0].series.value,
+            fetched=len(rows),
+            saved=saved,
+            first_date=observations[0].observation_date.isoformat(),
+            last_date=observations[-1].observation_date.isoformat(),
+        )
         return saved

@@ -11,6 +11,11 @@ from zoneinfo import ZoneInfo
 KST = ZoneInfo("Asia/Seoul")
 # 미 국채·주식 시장 시간대. FRED H.15는 16:15 ET에 공표된다.
 ET = ZoneInfo("America/New_York")
+# 아시아 지수의 거래소 시간대. 일봉의 거래일 판정이 시간대에 걸려 있어 시장마다 필요하다.
+JST = ZoneInfo("Asia/Tokyo")
+HKT = ZoneInfo("Asia/Hong_Kong")
+SHANGHAI = ZoneInfo("Asia/Shanghai")
+TAIPEI = ZoneInfo("Asia/Taipei")
 
 
 def kst_datetime(day: date, clock: time) -> datetime:

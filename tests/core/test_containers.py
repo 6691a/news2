@@ -9,7 +9,7 @@ from app.kis.korea.repository import KISKoreaTickRepository
 from app.kis.overseas.quote import KISOverseasWebSocketQuote
 from app.kis.overseas.repository import KISOverseasTickRepository
 from app.kis.schemas import KISWebSocketTokenResponse
-from app.macro.us_treasury.service import UsTreasuryYieldService
+from app.macro.us.treasury.service import UsTreasuryYieldService
 
 
 def test_container_provides_instrument_repository() -> None:

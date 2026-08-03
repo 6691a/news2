@@ -7,7 +7,7 @@ from sqlalchemy import CheckConstraint
 from app.core.models import enum_column
 from app.instruments.models import Instrument, Market
 from app.kis.korea.investor.models import InvestorFlow
-from app.macro.us_treasury.models import UsTreasuryBar, UsTreasuryYieldDaily
+from app.macro.us.treasury.models import UsTreasuryBar, UsTreasuryYieldDaily
 
 
 class SampleEnum(StrEnum):
@@ -21,7 +21,26 @@ FROZEN_DDL = [
         "market",
         "instrument_market",
         9,
-        ["KRX", "NASDAQ", "NYSE_ARCA"],
+        [
+            "KRX",
+            "NASDAQ",
+            "NYSE",
+            "NYSE_ARCA",
+            "US_INDEX",
+            "JPX",
+            "HKEX",
+            "SSE",
+            "TWSE",
+            "GLOBEX",
+            "FX",
+        ],
+    ),
+    (
+        Instrument,
+        "kind",
+        "instrument_kind",
+        9,
+        ["EQUITY", "ETF", "INDEX", "FX", "FUTURES", "COMMODITY"],
     ),
     (
         InvestorFlow,

@@ -7,11 +7,11 @@ import pytest
 from fastapi import status
 from yfinance.exceptions import YFRateLimitError
 
-from app.macro.us_treasury import service as service_module
-from app.macro.us_treasury.exceptions import TreasuryDataUnavailableError, YahooRetryableError
-from app.macro.us_treasury.schemas import TreasurySeries
-from app.macro.us_treasury.service import UsTreasuryYieldService
-from tests.macro.us_treasury.fixtures import (
+from app.macro.us.treasury import service as service_module
+from app.macro.us.treasury.exceptions import TreasuryDataUnavailableError, YahooRetryableError
+from app.macro.us.treasury.schemas import TreasurySeries
+from app.macro.us.treasury.service import UsTreasuryYieldService
+from tests.macro.us.treasury.fixtures import (
     FRED_DGS10_RESPONSE,
     TNX_HISTORY_FRAME,
     ZN_HISTORY_FRAME,

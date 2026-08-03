@@ -17,12 +17,12 @@ def beat_schedule() -> dict[str, dict[str, Any]]:
         # KST로 22:30~05:10(서머타임)/23:30~06:10(표준시)라 22:00~07:45 창으로 둘 다 덮는다.
         # 폐장·휴장 폴링은 (series, event_ts) 중복으로 전부 skip되어 무해하다.
         "us-treasury-intraday-evening": {
-            "task": "macro.us_treasury.collect_intraday",
+            "task": "macro.us.treasury.collect_intraday",
             "schedule": crontab(minute="*/15", hour="22-23", day_of_week="mon-fri"),
             "args": ("US10Y",),
         },
         "us-treasury-intraday-morning": {
-            "task": "macro.us_treasury.collect_intraday",
+            "task": "macro.us.treasury.collect_intraday",
             "schedule": crontab(minute="*/15", hour="0-7", day_of_week="tue-sat"),
             "args": ("US10Y",),
         },
@@ -32,14 +32,14 @@ def beat_schedule() -> dict[str, dict[str, Any]]:
         # Globex 폐장 구간(KST 토 06:00 ~ 월 07:00 부근)과 유지보수 휴지의 폴링은
         # (series, event_ts) 중복으로 전부 skip되어 무해하다. 일요일만 제외한다.
         "us-treasury-futures-intraday": {
-            "task": "macro.us_treasury.collect_intraday",
+            "task": "macro.us.treasury.collect_intraday",
             "schedule": crontab(minute="*/15", day_of_week="mon-sat"),
             "args": ("ZN",),
         },
         # KST 10:00 = ET 20:00/21:00(전일). dispatch 시점 ET 날짜 = 방금 끝난 미국 영업일이고
         # 그 날짜의 H.15(16:15 ET 공표)는 이미 나와 있다.
         "us-treasury-final": {
-            "task": "macro.us_treasury.dispatch_final",
+            "task": "macro.us.treasury.dispatch_final",
             "schedule": crontab(minute=0, hour=10, day_of_week="tue-sat"),
         },
     }

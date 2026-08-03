@@ -9,12 +9,12 @@ from app.core._time import ET
 from app.core.celery import app
 from app.core.models import utc_now
 
-# __main__을 그대로 재사용한다. 수동 실행(python -m app.macro.us_treasury)과
+# __main__을 그대로 재사용한다. 수동 실행(python -m app.macro.us.treasury)과
 # 배치가 같은 코드를 타므로 중복이 없다. import 시점에 컨테이너 wiring과
 # 로깅 설정도 함께 끝난다.
-from app.macro.us_treasury.__main__ import main
-from app.macro.us_treasury.exceptions import TreasuryDataUnavailableError, YahooRetryableError
-from app.macro.us_treasury.schemas import TreasuryPhase, TreasuryProbeOptions, TreasurySeries
+from app.macro.us.treasury.__main__ import main
+from app.macro.us.treasury.exceptions import TreasuryDataUnavailableError, YahooRetryableError
+from app.macro.us.treasury.schemas import TreasuryPhase, TreasuryProbeOptions, TreasurySeries
 
 
 # 재시도 대상은 네트워크·타임아웃과 yfinance의 일시적인 실패뿐이다.
@@ -41,7 +41,7 @@ FINAL_RETRY_POLICY = {
 }
 
 
-@app.task(name="macro.us_treasury.collect_intraday", **INTRADAY_RETRY_POLICY)
+@app.task(name="macro.us.treasury.collect_intraday", **INTRADAY_RETRY_POLICY)
 def task_collect_intraday(series: str) -> None:
     """계열 하나의 장중 1분봉을 한 번 수집해 저장한다.
 
@@ -62,7 +62,7 @@ def task_collect_intraday(series: str) -> None:
     )
 
 
-@app.task(name="macro.us_treasury.dispatch_final")
+@app.task(name="macro.us.treasury.dispatch_final")
 def task_dispatch_final() -> None:
     """발사 시점의 ET 날짜를 고정해 task_collect_final에 넘긴다.
 
@@ -74,7 +74,7 @@ def task_dispatch_final() -> None:
     task_collect_final.delay(utc_now().astimezone(ET).date().isoformat())
 
 
-@app.task(name="macro.us_treasury.collect_final", **FINAL_RETRY_POLICY)
+@app.task(name="macro.us.treasury.collect_final", **FINAL_RETRY_POLICY)
 def task_collect_final(target_date: str) -> None:
     """지정한 미국 영업일의 확정 수익률(FRED DGS10)을 수집해 저장한다.
 

@@ -4,7 +4,8 @@ from celery import Celery
 
 from app.core.config import settings
 from app.kis.korea.investor.beats import beat_schedule as investor_beat_schedule
-from app.macro.us_treasury.beats import beat_schedule as us_treasury_beat_schedule
+from app.macro.us.treasury.beats import beat_schedule as us_treasury_beat_schedule
+from app.ohlcv.beats import beat_schedule as ohlcv_beat_schedule
 
 
 app = Celery("news2", broker=settings.redis_url)
@@ -18,7 +19,8 @@ app.conf.task_acks_late = True
 app.conf.worker_max_tasks_per_child = 100
 app.conf.imports = (
     "app.kis.korea.investor.tasks",
-    "app.macro.us_treasury.tasks",
+    "app.macro.us.treasury.tasks",
+    "app.ohlcv.tasks",
 )
 
 # beat crontab만 KST로 읽는다. CLAUDE.md의 UTC 규칙은 저장되는 datetime에 대한
@@ -33,4 +35,5 @@ app.conf.imports = (
 app.conf.beat_schedule = {
     **investor_beat_schedule(),
     **us_treasury_beat_schedule(),
+    **ohlcv_beat_schedule(),
 }

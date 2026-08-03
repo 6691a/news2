@@ -261,3 +261,52 @@ async def test_save_skips_only_the_venue_already_stored_in_the_slot() -> None:
     rows = session.add_all.call_args.args[0]
     assert saved == len(rows) == len(InvestorType)
     assert {row.venue for row in rows} == {InvestorFlowVenue.NXT}
+
+
+@pytest.mark.asyncio
+async def test_save_final_dedupe_ignores_snapshot_and_scopes_to_trade_date() -> None:
+    """확정치는 하루에 하나뿐이라 snapshot_ts가 달라도 다시 쌓이면 안 된다.
+
+    백필은 수백 거래일을 한 snapshot_ts로 돌기 때문에, 중복 검사에 snapshot_ts를 걸면
+    첫 날짜 이후가 전부 "이미 저장됨"으로 스킵된다(실제로 그렇게 막혔다).
+    """
+
+    results = (_result("005930", InvestorFlowVenue.KRX, InvestorFlowTrId.STOCK_FINAL, STOCK_FINAL_FLOW_RESPONSES[0]),)
+    session = AsyncMock(spec=AsyncSession)
+    session.execute.side_effect = [_execute_result([]), _execute_result([("005930", 1)])]
+    session.add_all = MagicMock()
+    session_context = AsyncMock()
+    session_context.__aenter__.return_value = session
+    session_factory = MagicMock(spec=async_sessionmaker)
+    session_factory.begin.return_value = session_context
+    repository = KISInvestorFlowRepository(cast("async_sessionmaker[AsyncSession]", session_factory))
+
+    await repository.save(results, FINAL_OPTIONS, SNAPSHOT_TS)
+
+    where_clause = str(session.execute.await_args_list[0].args[0])
+    assert "investor_flows.trade_date" in where_clause
+    assert "investor_flows.is_provisional" in where_clause
+    assert "investor_flows.snapshot_ts" not in where_clause
+
+
+@pytest.mark.asyncio
+async def test_save_intraday_dedupe_stays_scoped_to_the_snapshot_slot() -> None:
+    """장중 잠정치는 슬롯별 이력이 분석 대상이라 snapshot_ts로 좁혀야 한다."""
+
+    results = (
+        _result(
+            "005930", InvestorFlowVenue.UNSPECIFIED, InvestorFlowTrId.STOCK_INTRADAY, STOCK_INTRADAY_FLOW_RESPONSES[0]
+        ),
+    )
+    session = AsyncMock(spec=AsyncSession)
+    session.execute.side_effect = [_execute_result([]), _execute_result([("005930", 1)])]
+    session.add_all = MagicMock()
+    session_context = AsyncMock()
+    session_context.__aenter__.return_value = session
+    session_factory = MagicMock(spec=async_sessionmaker)
+    session_factory.begin.return_value = session_context
+    repository = KISInvestorFlowRepository(cast("async_sessionmaker[AsyncSession]", session_factory))
+
+    await repository.save(results, INTRADAY_OPTIONS, SNAPSHOT_TS)
+
+    assert "investor_flows.snapshot_ts" in str(session.execute.await_args_list[0].args[0])

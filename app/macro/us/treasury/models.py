@@ -7,7 +7,7 @@ from sqlalchemy import Date, Numeric, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.models import EntityModel, UTCDateTime, enum_column
-from app.macro.us_treasury.schemas import TreasurySeries
+from app.macro.us.treasury.schemas import TreasurySeries
 
 
 class UsTreasuryBar(EntityModel):

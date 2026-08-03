@@ -12,8 +12,11 @@ from app.kis.korea.repository import KISKoreaTickRepository
 from app.kis.overseas.quote import KISOverseasWebSocketQuote
 from app.kis.overseas.repository import KISOverseasTickRepository
 from app.kis.schemas import KISWebSocketTokenResponse
-from app.macro.us_treasury.repository import UsTreasuryYieldRepository
-from app.macro.us_treasury.service import UsTreasuryYieldService
+from app.macro.us.treasury.repository import UsTreasuryYieldRepository
+from app.macro.us.treasury.service import UsTreasuryYieldService
+from app.ohlcv.korea import KISKoreaDailyChartService
+from app.ohlcv.overseas import YahooDailyChartService
+from app.ohlcv.repository import OhlcvRepository
 
 
 async def provide_websocket_token(auth: KISAuth) -> KISWebSocketTokenResponse:
@@ -82,6 +85,16 @@ class Container(containers.DeclarativeContainer):
     )
     us_treasury_yield_repository = providers.Factory(
         UsTreasuryYieldRepository,
+        session_factory=database.provided.session_factory,
+    )
+    korea_daily_chart_service = providers.Factory(
+        KISKoreaDailyChartService,
+        settings=settings,
+        auth=kis_auth,
+    )
+    overseas_daily_chart_service = providers.Factory(YahooDailyChartService)
+    ohlcv_repository = providers.Factory(
+        OhlcvRepository,
         session_factory=database.provided.session_factory,
     )
 

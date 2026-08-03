@@ -5,17 +5,18 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from app.macro.us_treasury.exceptions import TreasuryDataUnavailableError
-from app.macro.us_treasury.schemas import (
+from app.macro.us.treasury.exceptions import TreasuryDataUnavailableError
+from app.macro.us.treasury.schemas import (
     FredObservationsEnvelope,
     FredObservationsRequest,
     TreasuryPhase,
     TreasuryProbeOptions,
     TreasurySeries,
+    parse_fred_observations,
     parse_fred_response,
     parse_history_frame,
 )
-from tests.macro.us_treasury.fixtures import (
+from tests.macro.us.treasury.fixtures import (
     FRED_DGS10_EMPTY_RESPONSE,
     FRED_DGS10_MISSING_RESPONSE,
     FRED_DGS10_RESPONSE,
@@ -174,3 +175,78 @@ def test_series_maps_to_source_identifiers() -> None:
 
     with pytest.raises(ValueError):
         _ = TreasurySeries.ZN_FUTURE.fred_series_id
+
+
+def test_backfill_options_require_period() -> None:
+    with pytest.raises(ValidationError, match="requires start_date"):
+        TreasuryProbeOptions(phase=TreasuryPhase.BACKFILL, target_date=date(2026, 7, 31))
+
+
+def test_backfill_options_reject_reversed_period() -> None:
+    with pytest.raises(ValidationError, match="must not be after"):
+        TreasuryProbeOptions(
+            phase=TreasuryPhase.BACKFILL,
+            start_date=date(2026, 7, 31),
+            target_date=date(2025, 1, 1),
+        )
+
+
+def test_final_options_reject_start_date() -> None:
+    with pytest.raises(ValidationError, match="does not accept start_date"):
+        TreasuryProbeOptions(
+            phase=TreasuryPhase.FINAL,
+            start_date=date(2025, 1, 1),
+            target_date=date(2026, 7, 31),
+        )
+
+
+def test_parse_fred_observations_skips_missing_values_and_sorts() -> None:
+    envelope = FredObservationsEnvelope.model_validate(
+        {
+            **FRED_DGS10_RESPONSE,
+            "observations": [
+                {
+                    "realtime_start": "2026-07-28",
+                    "realtime_end": "2026-07-28",
+                    "date": "2025-01-03",
+                    "value": "4.60",
+                },
+                {
+                    "realtime_start": "2026-07-28",
+                    "realtime_end": "2026-07-28",
+                    "date": "2025-01-01",
+                    "value": ".",
+                },
+                {
+                    "realtime_start": "2026-07-28",
+                    "realtime_end": "2026-07-28",
+                    "date": "2025-01-02",
+                    "value": "4.56",
+                },
+            ],
+        }
+    )
+
+    observations = parse_fred_observations(TreasurySeries.US_10Y, envelope)
+
+    # 휴장일(".")은 빠지고, 실제로 값이 있는 첫 날짜부터 오름차순으로 담긴다.
+    assert [item.observation_date for item in observations] == [date(2025, 1, 2), date(2025, 1, 3)]
+    assert observations[0].yield_pct == Decimal("4.56")
+
+
+def test_parse_fred_observations_returns_empty_when_all_missing() -> None:
+    envelope = FredObservationsEnvelope.model_validate(
+        {
+            **FRED_DGS10_RESPONSE,
+            "observations": [
+                {
+                    "realtime_start": "2026-07-28",
+                    "realtime_end": "2026-07-28",
+                    "date": "2025-01-01",
+                    "value": ".",
+                }
+            ],
+        }
+    )
+
+    assert parse_fred_observations(TreasurySeries.US_10Y, envelope) == ()

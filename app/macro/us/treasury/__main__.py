@@ -1,4 +1,10 @@
-"""미국 국채 수익률·국채선물 수집·저장 엔트리포인트."""
+"""미국 국채 수익률·국채선물 수집·저장 엔트리포인트.
+
+python -m app.macro.us.treasury               # 10년물 장중 1분봉
+python -m app.macro.us.treasury ZN            # 국채선물 장중 1분봉
+python -m app.macro.us.treasury 2026-07-30    # 그 날짜의 확정 수익률
+python -m app.macro.us.treasury backfill      # 기준 시작일(2025-01-01)부터 오늘까지 확정 수익률
+"""
 
 import asyncio
 import sys
@@ -9,13 +15,15 @@ from typing import Annotated
 import httpx
 from dependency_injector.wiring import Provide, inject
 
+from app.core._time import ET
+from app.core.collection import BACKFILL_KEYWORD, BACKFILL_START
 from app.core.containers import Container, container
 from app.core.database import Database
 from app.core.logging import configure_logging, get_logger
 from app.core.models import utc_now
-from app.macro.us_treasury.repository import UsTreasuryYieldRepository
-from app.macro.us_treasury.schemas import TreasuryPhase, TreasuryProbeOptions, TreasurySeries
-from app.macro.us_treasury.service import UsTreasuryYieldService
+from app.macro.us.treasury.repository import UsTreasuryYieldRepository
+from app.macro.us.treasury.schemas import TreasuryPhase, TreasuryProbeOptions, TreasurySeries
+from app.macro.us.treasury.service import UsTreasuryYieldService
 
 
 configure_logging(container.settings())
@@ -30,10 +38,11 @@ def build_options(argv: Sequence[str]) -> TreasuryProbeOptions:
 
     Returns:
         인자가 없으면 10년물 수익률 장중 수집 옵션, 계열 값(`US10Y`·`ZN`)을 주면 그
-        계열의 장중 수집 옵션, `YYYY-MM-DD`를 주면 그 날짜의 확정치 수집 옵션.
+        계열의 장중 수집 옵션, `YYYY-MM-DD`를 주면 그 날짜의 확정치 수집 옵션,
+        `backfill`이면 기준 시작일부터 오늘까지의 확정치 수집 옵션.
 
     Raises:
-        ValueError: 인자가 계열 값도 ISO 8601 날짜도 아닌 경우.
+        ValueError: 인자가 계열 값도 `backfill`도 ISO 8601 날짜도 아닌 경우.
     """
 
     if not argv:
@@ -44,6 +53,14 @@ def build_options(argv: Sequence[str]) -> TreasuryProbeOptions:
         return TreasuryProbeOptions(
             phase=TreasuryPhase.INTRADAY,
             series=TreasurySeries(argument),
+        )
+
+    if argument == BACKFILL_KEYWORD:
+        # 종료일은 ET 오늘. 오늘치가 아직 공표 전이면 결측으로 와서 그냥 빠진다.
+        return TreasuryProbeOptions(
+            phase=TreasuryPhase.BACKFILL,
+            start_date=BACKFILL_START,
+            target_date=utc_now().astimezone(ET).date(),
         )
 
     return TreasuryProbeOptions(
@@ -80,23 +97,37 @@ async def main(
     # event_ts·observation_date가 dedupe 키라 snapshot_ts는 눈금을 맞출 필요가 없다.
     snapshot_ts = utc_now()
     try:
+        first_date = ""
+        target_date = ""
         if options.phase is TreasuryPhase.INTRADAY:
             result = await service.collect_intraday(options.series)
             saved = await repository.save_intraday(result, snapshot_ts)
             fetched = len(result.bars)
-            target_date = ""
         else:
             assert options.target_date is not None
             async with httpx.AsyncClient() as client:
-                observation = await service.collect_final(options.series, options.target_date, client)
-            saved = await repository.save_final(observation, snapshot_ts)
-            fetched = 1
-            target_date = observation.observation_date.isoformat()
+                if options.phase is TreasuryPhase.BACKFILL:
+                    assert options.start_date is not None
+                    observations = await service.collect_backfill(
+                        options.series,
+                        options.start_date,
+                        options.target_date,
+                        client,
+                    )
+                else:
+                    observations = (await service.collect_final(options.series, options.target_date, client),)
+
+            saved = await repository.save_final(observations, snapshot_ts)
+            fetched = len(observations)
+            # 요청 시작일보다 늦게 시작하는 시리즈가 있으므로 실제 첫 관측일을 남긴다.
+            first_date = observations[0].observation_date.isoformat() if observations else ""
+            target_date = observations[-1].observation_date.isoformat() if observations else ""
 
         logger.info(
             "us_treasury_saved",
             phase=options.phase.value,
             series=options.series.value,
+            first_date=first_date,
             target_date=target_date,
             fetched=fetched,
             saved=saved,

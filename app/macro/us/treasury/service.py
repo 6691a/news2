@@ -11,13 +11,14 @@ from app.core.config import Settings
 from app.core.http import raise_for_status
 from app.core.logging import get_logger
 from app.core.models import utc_now
-from app.macro.us_treasury.exceptions import TreasuryDataUnavailableError, YahooRetryableError
-from app.macro.us_treasury.schemas import (
+from app.macro.us.treasury.exceptions import TreasuryDataUnavailableError, YahooRetryableError
+from app.macro.us.treasury.schemas import (
     FredObservationsEnvelope,
     FredObservationsRequest,
     TreasuryFinalObservation,
     TreasuryIntradayResult,
     TreasurySeries,
+    parse_fred_observations,
     parse_fred_response,
     parse_history_frame,
 )
@@ -101,14 +102,69 @@ class UsTreasuryYieldService:
             TreasuryDataUnavailableError: 대상 날짜 관측값이 아직 없는 경우.
         """
 
+        envelope = await self._fetch_observations(series, target_date, target_date, client)
+        return parse_fred_response(series, target_date, envelope)
+
+    async def collect_backfill(
+        self,
+        series: TreasurySeries,
+        start_date: date,
+        end_date: date,
+        client: httpx.AsyncClient,
+    ) -> tuple[TreasuryFinalObservation, ...]:
+        """구간의 확정 수익률을 한 번의 호출로 수집한다.
+
+        FRED가 기간 조회를 지원해 날짜마다 호출할 필요가 없다. 결측(휴장·시리즈 시작 이전)은
+        예외로 올리지 않고 건너뛴다 — 소스가 주는 가장 이른 값부터 담는 게 백필 규칙이다.
+
+        Args:
+            series: 수집할 계열. 확정치 소스가 있는 계열이어야 한다.
+            start_date: 구간 시작일(기준 시작일 `BACKFILL_START`).
+            end_date: 구간 종료일.
+            client: 요청에 사용할 비동기 HTTP 클라이언트.
+
+        Returns:
+            날짜 오름차순의 확정 수익률 목록. 구간에 값이 하나도 없으면 빈 튜플.
+
+        Raises:
+            ValueError: FRED API 키가 설정되지 않은 경우.
+            httpx.HTTPError: 네트워크 전송에 실패하거나 응답이 4xx·5xx인 경우.
+        """
+
+        envelope = await self._fetch_observations(series, start_date, end_date, client)
+        return parse_fred_observations(series, envelope)
+
+    async def _fetch_observations(
+        self,
+        series: TreasurySeries,
+        start_date: date,
+        end_date: date,
+        client: httpx.AsyncClient,
+    ) -> FredObservationsEnvelope:
+        """FRED observations를 기간으로 조회해 검증된 응답 봉투를 돌려준다.
+
+        Args:
+            series: 조회할 계열.
+            start_date: 관측 시작일.
+            end_date: 관측 종료일.
+            client: 요청에 사용할 비동기 HTTP 클라이언트.
+
+        Returns:
+            검증된 FRED observations 응답.
+
+        Raises:
+            ValueError: FRED API 키가 설정되지 않은 경우.
+            httpx.HTTPError: 네트워크 전송에 실패하거나 응답이 4xx·5xx인 경우.
+        """
+
         if not self.settings.fred_api_key:
             raise ValueError("FRED_API_KEY 설정이 필요합니다.")
 
         request = FredObservationsRequest(
             series_id=series.fred_series_id,
             api_key=self.settings.fred_api_key,
-            observation_start=target_date,
-            observation_end=target_date,
+            observation_start=start_date,
+            observation_end=end_date,
         )
         response = await client.get(
             url=FRED_OBSERVATIONS_URL,
@@ -119,8 +175,8 @@ class UsTreasuryYieldService:
             response,
             source="fred_observations",
             series=series.value,
-            target_date=target_date.isoformat(),
+            observation_start=start_date.isoformat(),
+            observation_end=end_date.isoformat(),
         )
 
-        fred_response = FredObservationsEnvelope.model_validate(response.json())
-        return parse_fred_response(series, target_date, fred_response)
+        return FredObservationsEnvelope.model_validate(response.json())

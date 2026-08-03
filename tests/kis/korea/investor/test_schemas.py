@@ -1,4 +1,8 @@
+import logging
+from copy import deepcopy
+from datetime import date
 from decimal import Decimal
+from typing import cast
 
 import pytest
 from pydantic import ValidationError
@@ -169,3 +173,52 @@ def test_non_json_body_uses_typed_text_fallback() -> None:
 
     assert isinstance(body, schemas.InvestorFlowTextBody)
     assert body.root == "not json at all"
+
+
+def test_trade_dates_returns_single_day_without_backfill() -> None:
+    options = InvestorFlowProbeOptions(phase=InvestorFlowPhase.FINAL, trade_date=date(2026, 7, 30))
+
+    assert options.trade_dates() == (date(2026, 7, 30),)
+
+
+def test_trade_dates_skips_weekends_over_backfill_range() -> None:
+    # 2025-01-03(금) ~ 2025-01-06(월). 주말 이틀은 응답이 비어 있어 미리 걸러낸다.
+    options = InvestorFlowProbeOptions(
+        phase=InvestorFlowPhase.FINAL,
+        start_date=date(2025, 1, 3),
+        trade_date=date(2025, 1, 6),
+    )
+
+    assert options.trade_dates() == (date(2025, 1, 3), date(2025, 1, 6))
+
+
+def test_trade_dates_is_empty_for_intraday() -> None:
+    assert InvestorFlowProbeOptions(phase=InvestorFlowPhase.INTRADAY).trade_dates() == ()
+
+
+def test_intraday_options_reject_backfill_range() -> None:
+    with pytest.raises(ValidationError, match="does not accept start_date"):
+        InvestorFlowProbeOptions(phase=InvestorFlowPhase.INTRADAY, start_date=date(2025, 1, 1))
+
+
+def test_backfill_options_reject_reversed_period() -> None:
+    with pytest.raises(ValidationError, match="must not be after"):
+        InvestorFlowProbeOptions(
+            phase=InvestorFlowPhase.FINAL,
+            start_date=date(2026, 7, 31),
+            trade_date=date(2025, 1, 1),
+        )
+
+
+def test_stock_final_body_drops_blank_padding_rows(caplog: pytest.LogCaptureFixture) -> None:
+    # NXT 출범 전 날짜처럼 데이터가 없는 구간에서는 KIS가 영업일자만 채우고 나머지를
+    # 전부 빈 문자열로 보낸다. 두면 숫자 파싱이 통째로 깨져 그 날짜 수집이 죽는다.
+    payload = deepcopy(STOCK_FINAL_FLOW_RESPONSES[0])
+    rows = cast("list[dict[str, str]]", payload["output2"])
+    rows.append({key: ("20241118" if key == "stck_bsop_date" else "") for key in rows[0]})
+
+    with caplog.at_level(logging.WARNING):
+        body = schemas.StockFinalFlowBody.model_validate(payload)
+
+    assert len(body.output2) == len(rows) - 1
+    assert "investor_flow_blank_rows_dropped" in caplog.text

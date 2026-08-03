@@ -6,9 +6,9 @@ from celery.exceptions import Retry
 from yfinance.exceptions import YFRateLimitError
 
 from app.core.celery import app
-from app.macro.us_treasury import tasks
-from app.macro.us_treasury.exceptions import TreasuryDataUnavailableError, YahooRetryableError
-from app.macro.us_treasury.schemas import TreasuryPhase, TreasuryProbeOptions, TreasurySeries
+from app.macro.us.treasury import tasks
+from app.macro.us.treasury.exceptions import TreasuryDataUnavailableError, YahooRetryableError
+from app.macro.us.treasury.schemas import TreasuryPhase, TreasuryProbeOptions, TreasurySeries
 
 
 def _capture_options(captured: list[TreasuryProbeOptions]):
@@ -143,12 +143,12 @@ def test_intraday_task_does_not_retry_on_yfinance_rate_limit(monkeypatch: pytest
 def test_beat_schedule_polls_both_series_and_dispatches_final() -> None:
     schedule = app.conf.beat_schedule
 
-    assert "app.macro.us_treasury.tasks" in app.conf.imports
-    assert schedule["us-treasury-intraday-evening"]["task"] == "macro.us_treasury.collect_intraday"
+    assert "app.macro.us.treasury.tasks" in app.conf.imports
+    assert schedule["us-treasury-intraday-evening"]["task"] == "macro.us.treasury.collect_intraday"
     assert schedule["us-treasury-intraday-evening"]["args"] == ("US10Y",)
     assert schedule["us-treasury-intraday-morning"]["args"] == ("US10Y",)
     assert schedule["us-treasury-futures-intraday"]["args"] == ("ZN",)
-    assert schedule["us-treasury-final"]["task"] == "macro.us_treasury.dispatch_final"
-    assert tasks.task_collect_intraday.name == "macro.us_treasury.collect_intraday"
-    assert tasks.task_collect_final.name == "macro.us_treasury.collect_final"
-    assert tasks.task_dispatch_final.name == "macro.us_treasury.dispatch_final"
+    assert schedule["us-treasury-final"]["task"] == "macro.us.treasury.dispatch_final"
+    assert tasks.task_collect_intraday.name == "macro.us.treasury.collect_intraday"
+    assert tasks.task_collect_final.name == "macro.us.treasury.collect_final"
+    assert tasks.task_dispatch_final.name == "macro.us.treasury.dispatch_final"
