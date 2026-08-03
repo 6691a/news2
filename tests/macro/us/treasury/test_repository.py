@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import Insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from structlog.testing import capture_logs
 
 from app.macro.us.treasury.repository import UsTreasuryYieldRepository
 from app.macro.us.treasury.schemas import (
@@ -111,10 +112,16 @@ async def test_save_intraday_skips_the_database_when_no_bars_arrived() -> None:
     repository = UsTreasuryYieldRepository(cast("async_sessionmaker[AsyncSession]", session_factory))
     result = TreasuryIntradayResult(series=TreasurySeries.US_10Y, bars=())
 
-    saved = await repository.save_intraday(result, SNAPSHOT_TS)
+    with capture_logs() as logs:
+        saved = await repository.save_intraday(result, SNAPSHOT_TS)
 
     assert saved == 0
     session.execute.assert_not_awaited()
+    # 폐장으로 0건인 것과 심볼을 잘못 넣어 0건인 것은 응답 모양이 같다. WARNING으로 남긴다.
+    empty = [entry for entry in logs if entry["event"] == "treasury_intraday_saved"]
+    assert len(empty) == 1
+    assert empty[0]["log_level"] == "warning"
+    assert (empty[0]["fetched"], empty[0]["saved"]) == (0, 0)
 
 
 @pytest.mark.asyncio

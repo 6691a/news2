@@ -68,7 +68,9 @@ class UsTreasuryYieldRepository:
         """
 
         if not result.bars:
-            logger.info("treasury_intraday_saved", series=result.series.value, fetched=0, saved=0)
+            # 폐장·휴장이면 정상이지만 심볼·설정을 잘못 넣어도 같은 모양이다.
+            # 조용히 넘어가면 그 계열만 영영 비어 있는다.
+            logger.warning("treasury_intraday_saved", series=result.series.value, fetched=0, saved=0)
             return 0
 
         rows: list[_TreasuryBarInsertValues] = [

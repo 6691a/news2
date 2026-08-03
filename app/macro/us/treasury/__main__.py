@@ -4,6 +4,9 @@ python -m app.macro.us.treasury               # 10년물 장중 1분봉
 python -m app.macro.us.treasury ZN            # 국채선물 장중 1분봉
 python -m app.macro.us.treasury 2026-07-30    # 그 날짜의 확정 수익률
 python -m app.macro.us.treasury backfill      # 기준 시작일(2025-01-01)부터 오늘까지 확정 수익률
+
+장중 1분봉에는 backfill 경로가 없다. Yahoo가 1분봉을 30일까지만 보관해 과거를 채울 수
+없고, 가동 시작 시점이 곧 그 그레인 데이터의 시작이다. 조사하고 없는 것이지 빠뜨린 게 아니다.
 """
 
 import asyncio

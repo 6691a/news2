@@ -8,8 +8,11 @@ from typing import Self
 import pandas as pd
 from pydantic import AwareDatetime, BaseModel, model_validator
 
+from app.core.logging import get_logger
 from app.macro.us.treasury.exceptions import TreasuryDataUnavailableError
 
+
+logger = get_logger(__name__)
 
 # 1분봉의 길이. 봉 시작 시각 + 이 간격이 아직 오지 않았으면 값이 더 변한다.
 BAR_INTERVAL = timedelta(minutes=1)
@@ -197,7 +200,7 @@ def parse_history_frame(
         as_of: 파싱 기준 시각(timezone-aware). 아직 끝나지 않은 봉을 걸러낼 때 쓴다.
 
     Returns:
-        완료된 봉만 담은 수집 결과.
+        완료된 봉만 담은 수집 결과. 버린 행이 있으면 건수를 로그로 남긴다.
 
     Raises:
         ValueError: OHLC 열이 빠졌거나 인덱스가 timezone-aware가 아닌 경우.
@@ -210,15 +213,19 @@ def parse_history_frame(
         raise ValueError("yfinance history index must be timezone-aware")
 
     bars: list[IntradayBar] = []
+    missing_close = 0
+    unsettled = 0
     for event_ts, row in frame.iterrows():
         close = _decimal_or_none(row["Close"])
         if close is None:
             # 거래가 없던 분은 yfinance가 NaN 행으로 돌려줄 수 있다.
+            missing_close += 1
             continue
 
         utc_event_ts = event_ts.to_pydatetime().astimezone(UTC)
         if utc_event_ts + BAR_INTERVAL > as_of:
             # 진행 중인 봉은 값이 아직 변한다. 저장하면 다음 회차가 갱신하지 못한다.
+            unsettled += 1
             continue
 
         bars.append(
@@ -231,6 +238,21 @@ def parse_history_frame(
             )
         )
 
+    if missing_close:
+        logger.warning(
+            "treasury_intraday_rows_without_close",
+            series=series.value,
+            received=len(frame.index),
+            dropped=missing_close,
+        )
+    # 응답 형식이 바뀌어 멀쩡한 봉을 버리기 시작해도 이 건수만 보면 드러난다.
+    logger.info(
+        "treasury_intraday_parsed",
+        series=series.value,
+        received=len(frame.index),
+        parsed=len(bars),
+        skipped_unsettled=unsettled,
+    )
     return TreasuryIntradayResult(series=series, bars=tuple(bars))
 
 

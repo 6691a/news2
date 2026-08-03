@@ -4,6 +4,7 @@ from decimal import Decimal
 
 import pytest
 from pydantic import ValidationError
+from structlog.testing import capture_logs
 
 from app.macro.us.treasury.exceptions import TreasuryDataUnavailableError
 from app.macro.us.treasury.schemas import (
@@ -96,6 +97,48 @@ def test_parse_history_frame_drops_the_bar_still_in_progress() -> None:
         datetime(2026, 7, 27, 12, 20, tzinfo=UTC),
         datetime(2026, 7, 27, 12, 21, tzinfo=UTC),
     ]
+
+
+def test_parse_history_frame_logs_dropped_and_parsed_counts() -> None:
+    with capture_logs() as logs:
+        result = parse_history_frame(TreasurySeries.ZN_FUTURE, ZN_HISTORY_FRAME, as_of=ZN_AS_OF)
+
+    dropped = [entry for entry in logs if entry["event"] == "treasury_intraday_rows_without_close"]
+    assert len(dropped) == 1
+    assert dropped[0]["log_level"] == "warning"
+    assert dropped[0]["dropped"] == 1
+
+    parsed = [entry for entry in logs if entry["event"] == "treasury_intraday_parsed"]
+    assert len(parsed) == 1
+    assert parsed[0]["series"] == "ZN"
+    # 버린 행까지 더하면 응답 건수가 나와야 한다. 하나라도 어긋나면 조용히 사라진 행이 있다.
+    assert parsed[0]["received"] == len(ZN_HISTORY_FRAME.index)
+    assert parsed[0]["parsed"] + parsed[0]["skipped_unsettled"] + dropped[0]["dropped"] == parsed[0]["received"]
+    assert parsed[0]["parsed"] == len(result.bars)
+
+
+def test_parse_history_frame_logs_unsettled_bars_without_warning() -> None:
+    # 12:22 봉은 아직 진행 중이다. 정상 동작이라 warning이 아니라 건수로만 남는다.
+    as_of = datetime(2026, 7, 27, 12, 22, 30, tzinfo=UTC)
+
+    with capture_logs() as logs:
+        parse_history_frame(TreasurySeries.US_10Y, TNX_HISTORY_FRAME, as_of=as_of)
+
+    assert not [entry for entry in logs if entry["event"] == "treasury_intraday_rows_without_close"]
+    parsed = [entry for entry in logs if entry["event"] == "treasury_intraday_parsed"]
+    assert (parsed[0]["received"], parsed[0]["parsed"], parsed[0]["skipped_unsettled"]) == (3, 2, 1)
+
+
+def test_parse_history_frame_logs_zero_parsed_when_everything_is_filtered() -> None:
+    # 응답은 왔는데 전부 걸러진 상태. 서비스는 frame.empty가 아니라 예외를 올리지 않는다.
+    as_of = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)
+
+    with capture_logs() as logs:
+        result = parse_history_frame(TreasurySeries.US_10Y, TNX_HISTORY_FRAME, as_of=as_of)
+
+    assert result.bars == ()
+    parsed = [entry for entry in logs if entry["event"] == "treasury_intraday_parsed"]
+    assert (parsed[0]["received"], parsed[0]["parsed"]) == (3, 0)
 
 
 def test_parse_history_frame_rejects_naive_index() -> None:
