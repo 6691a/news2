@@ -20,13 +20,16 @@ from app.core.collection import BACKFILL_KEYWORD, BACKFILL_START
 from app.core.containers import Container, container
 from app.core.database import Database
 from app.core.logging import configure_logging, get_logger
+from app.core.sentry import SentryRuntime, configure_sentry, flush_sentry
 from app.core.models import utc_now
 from app.kis.korea.investor.repository import KISInvestorFlowRepository, snapshot_slot_start
 from app.kis.korea.investor.schemas import InvestorFlowPhase, InvestorFlowProbeOptions
 from app.kis.korea.investor.service import KISKoreaInvestorFlowService
 
 
-configure_logging(container.settings())
+app_settings = container.settings()
+configure_sentry(app_settings, SentryRuntime.SCRIPT)
+configure_logging(app_settings)
 logger = get_logger(__name__)
 
 # 백필은 거래일마다 TR 5건을 부른다. KIS 초당 거래건수 제한에 걸리면 HTTP 200 + rt_cd != "0"
@@ -131,4 +134,7 @@ container.wire(modules=[sys.modules[__name__]], warn_unresolved=True)
 
 
 if __name__ == "__main__":
-    asyncio.run(main(build_options(sys.argv[1:])))
+    try:
+        asyncio.run(main(build_options(sys.argv[1:])))
+    finally:
+        flush_sentry()

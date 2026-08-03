@@ -16,6 +16,11 @@ def settings(*, fred_api_key: str = "fred-key") -> Settings:
     """
 
     return Settings(
+        sentry_dsn='https://public@example.ingest.sentry.io/1',
+        sentry_environment='test',
+        sentry_release='news2@test',
+        sentry_traces_sample_rate=0.0,
+        sentry_error_sample_rate=0.0,
         database_url="postgresql+asyncpg://user:pass@localhost/news2",
         redis_url="redis://localhost:6379/0",
         kis_app_key="app-key",

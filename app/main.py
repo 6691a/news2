@@ -5,9 +5,12 @@ from fastapi import FastAPI
 
 from app.core.containers import container
 from app.core.logging import configure_logging
+from app.core.sentry import SentryRuntime, configure_sentry
 
 
-configure_logging(container.settings())
+app_settings = container.settings()
+configure_sentry(app_settings, SentryRuntime.FASTAPI)
+configure_logging(app_settings)
 
 
 @asynccontextmanager

@@ -912,6 +912,8 @@ CREATE TABLE signal_outcomes (
 
 ## 11. 포트폴리오 관점 요약
 
+관측성 설정과 운영 방법은 [Sentry 오류 및 성능 모니터링](sentry.md)을 참고한다.
+
 이 프로젝트가 보여주는 역량:
 
 - **에이전틱 엔지니어링**: LangGraph 멀티 스텝 워크플로, 모델 라우팅, structured output

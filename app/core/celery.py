@@ -1,11 +1,41 @@
 """Celery 애플리케이션과 각 패키지 beat 스케줄 등록."""
 
 from celery import Celery
+from celery.signals import beat_init, worker_init
 
 from app.core.config import settings
-from app.kis.korea.investor.beats import beat_schedule as investor_beat_schedule
-from app.macro.us.treasury.beats import beat_schedule as us_treasury_beat_schedule
-from app.ohlcv.beats import beat_schedule as ohlcv_beat_schedule
+from app.core.sentry import SentryRuntime, configure_sentry, set_sentry_runtime
+
+
+configure_sentry(settings, SentryRuntime.CELERY)
+
+
+@worker_init.connect
+def _set_worker_runtime(**_: object) -> None:
+    '''Celery worker 프로세스의 Sentry 태그를 설정한다.'''
+
+    set_sentry_runtime(SentryRuntime.CELERY_WORKER)
+
+
+@beat_init.connect
+def _set_beat_runtime(**_: object) -> None:
+    '''Celery beat 프로세스의 Sentry 태그를 설정한다.'''
+
+    set_sentry_runtime(SentryRuntime.CELERY_BEAT)
+
+
+def _beat_schedule() -> dict[str, object]:
+    '''Sentry 초기화 후 각 패키지의 beat 스케줄을 불러온다.'''
+
+    from app.kis.korea.investor.beats import beat_schedule as investor_beat_schedule
+    from app.macro.us.treasury.beats import beat_schedule as us_treasury_beat_schedule
+    from app.ohlcv.beats import beat_schedule as ohlcv_beat_schedule
+
+    return {
+        **investor_beat_schedule(),
+        **us_treasury_beat_schedule(),
+        **ohlcv_beat_schedule(),
+    }
 
 
 app = Celery("news2", broker=settings.redis_url)
@@ -32,8 +62,4 @@ app.conf.imports = (
 #
 # 스케줄 본문은 각 패키지의 beats.py에 있다. 여기서는 모아 등록만 한다.
 # beats.py는 task를 import하지 않고 task 이름 문자열만 참조하므로 순환 import가 없다.
-app.conf.beat_schedule = {
-    **investor_beat_schedule(),
-    **us_treasury_beat_schedule(),
-    **ohlcv_beat_schedule(),
-}
+app.conf.beat_schedule = _beat_schedule()

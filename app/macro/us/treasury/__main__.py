@@ -20,13 +20,16 @@ from app.core.collection import BACKFILL_KEYWORD, BACKFILL_START
 from app.core.containers import Container, container
 from app.core.database import Database
 from app.core.logging import configure_logging, get_logger
+from app.core.sentry import SentryRuntime, configure_sentry, flush_sentry
 from app.core.models import utc_now
 from app.macro.us.treasury.repository import UsTreasuryYieldRepository
 from app.macro.us.treasury.schemas import TreasuryPhase, TreasuryProbeOptions, TreasurySeries
 from app.macro.us.treasury.service import UsTreasuryYieldService
 
 
-configure_logging(container.settings())
+app_settings = container.settings()
+configure_sentry(app_settings, SentryRuntime.SCRIPT)
+configure_logging(app_settings)
 logger = get_logger(__name__)
 
 
@@ -141,4 +144,7 @@ container.wire(modules=[sys.modules[__name__]], warn_unresolved=True)
 
 
 if __name__ == "__main__":
-    asyncio.run(main(build_options(sys.argv[1:])))
+    try:
+        asyncio.run(main(build_options(sys.argv[1:])))
+    finally:
+        flush_sentry()

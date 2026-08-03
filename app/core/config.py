@@ -1,6 +1,13 @@
 from enum import StrEnum
+from typing import Annotated
 
+from pydantic import Field, HttpUrl, StringConstraints, UrlConstraints
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+NonBlankString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+SentryDsn = Annotated[HttpUrl, UrlConstraints(allowed_schemes=['https'])]
+SampleRate = Annotated[float, Field(ge=0.0, le=1.0)]
 
 
 class LogFormat(StrEnum):
@@ -32,6 +39,12 @@ class Settings(BaseSettings):
     redis_url: str
     log_format: LogFormat = LogFormat.CONSOLE
     log_level: LogLevel = LogLevel.INFO
+
+    sentry_dsn: SentryDsn
+    sentry_environment: NonBlankString
+    sentry_release: NonBlankString
+    sentry_traces_sample_rate: SampleRate = 0.1
+    sentry_error_sample_rate: SampleRate = 1.0
 
     # 한국투자증권
     kis_virtual: bool = False

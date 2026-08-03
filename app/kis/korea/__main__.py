@@ -10,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.core.containers import Container, container
 from app.core.database import Database
 from app.core.logging import configure_logging, get_logger
+from app.core.sentry import SentryRuntime, configure_sentry, flush_sentry
 from app.core.models import utc_now
 from app.instruments.models import Market
 from app.instruments.repository import InstrumentRepository
@@ -20,7 +21,9 @@ from app.kis.korea.schemas import (
     KISKoreaTrId,
 )
 
-configure_logging(container.settings())
+app_settings = container.settings()
+configure_sentry(app_settings, SentryRuntime.SCRIPT)
+configure_logging(app_settings)
 logger = get_logger(__name__)
 
 
@@ -93,4 +96,7 @@ container.wire(modules=[sys.modules[__name__]], warn_unresolved=True)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    finally:
+        flush_sentry()

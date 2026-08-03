@@ -186,6 +186,28 @@ from fastapi import status
 return httpx.Response(status.HTTP_502_BAD_GATEWAY, request=request)
 ```
 
+## Sentry / 오류 추적
+
+- 모든 개발 작업을 완료하기 전에 Sentry 영향도를 확인한다. 새 실행 진입점, 예외 처리
+  방식, 민감정보, 환경변수, runtime 태그, release, 샘플링 또는 통합 방식이 바뀌면
+  해당 작업에서 Sentry 설정·문서·테스트를 함께 갱신한다.
+- 새 FastAPI, Celery worker/beat 또는 단독 Python 실행 진입점은
+  `app.core.sentry.configure_sentry()`를 호출하고 실제 실행 환경에 맞는
+  `SentryRuntime` 값을 사용한다.
+- 종료 가능한 단독 실행 스크립트는 `finally`에서 `flush_sentry()`를 호출해 대기
+  이벤트 전송을 시도한다.
+- 예외를 잡고 계속 실행하면서 운영자가 확인해야 하는 실패는 `capture_exception()`
+  또는 stack trace가 포함된 ERROR 로그로 보고한다. 같은 예외를 두 방식으로 불필요하게
+  중복 보고하지 않는다.
+- 새로운 비밀값, 인증정보 또는 개인정보 필드가 생기면 `app/core/sentry.py`의 마스킹
+  목록을 갱신하고 실제 이벤트 기반 마스킹 테스트를 추가한다.
+- Sentry 동작이나 설정 계약이 달라지면 `docs/sentry.md`, `.env.example`, 필요하면
+  `.env.docker`와 관련 테스트를 함께 갱신한다.
+- 필수 Sentry 설정의 누락·공백·오류를 조용히 무시하는 비활성 fallback을 추가하지
+  않는다. 기존 fail-fast 검증을 유지한다.
+- Sentry 영향이 없는 작업은 위 항목을 점검한 뒤 Sentry 코드를 기계적으로 수정하지
+  않아도 된다. 상세 초기화 및 운영 방법은 `docs/sentry.md`를 따른다.
+
 ## Docstring
 
 - 함수를 작성할 때는 **구글 스타일 docstring**을 작성한다.
